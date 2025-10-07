@@ -70,7 +70,7 @@ def collision_equilibrium_CUDA(F, component_x, component_y, w, t_delta, tau):
     #F = cp.asnumpy(F)
 
 
-    return F
+    return F, Feq
 
 def collision_equilibrium_CUDA2(F, component_x, component_y, w, t_delta, tau):
 
@@ -89,7 +89,7 @@ def collision_equilibrium_CUDA2(F, component_x, component_y, w, t_delta, tau):
     )
 
     F = F * (1 - t_delta / tau) + Feq * (t_delta / tau)
-    return F
+    return F, Feq
 
 def boundary_object_CUDA(F, objects):
     # this one is really slow even when it's all done in gpu
