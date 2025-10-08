@@ -1,0 +1,12 @@
+This provides the possibility to compute checksums for arrays in Fortran, even
+across multiple MPI processes by exploiting zlibs functionality to compute
+partial checksums.
+
+Files:
+distcrc.c: provides a C-Wrapper to easily compute the checksum of Fortran Arrays
+           in distributed computations.
+
+distcheck_module.f90: Fortran interfaces to the checksum computation.
+
+checkTest.f90: Example program, showing how to utilize the distributed checksum
+               computation in an application.

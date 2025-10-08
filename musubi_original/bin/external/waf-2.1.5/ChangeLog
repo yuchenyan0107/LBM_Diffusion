@@ -1,0 +1,64 @@
+NEW IN WAF 2.1.5
+----------------
+* Enable Clang as assembler
+* Improve Qt detection
+* Add msvc/arm targets
+
+NEW IN WAF 2.1.4
+----------------
+* Prevent subprocesses from disrupting the main build process through inherited stdin
+* Fix a regression that prevents displaying help from custom commands
+
+NEW IN WAF 2.1.3
+----------------
+* Work around a race condition in mingw Python
+* Install Python artifacts under PREFIX in a similar way as waf-2.0
+* Disable GX warnings when buildin Python modules with Microsoft Visual Studio
+* Improve the build_logs (prevent log file collisions), PyQt (v6), Sphinx and Cuda examples
+
+NEW IN WAF 2.1.2
+----------------
+* Work around some Python regressions
+* Add latex dependeny on environment variables
+* Add support for flang compiler
+
+NEW IN WAF 2.1.1
+----------------
+* Fixed some argparse regressions
+* Fixed 'waf --version'
+* Updated most project examples
+
+CHANGES IN WAF 2.1.0
+--------------------
+* While the Waf file runs on Python 2 and 3, creating it requires Python 3
++ Added wafcache
++ waf_unit_test: Added task in returned tuples, custom reports should be adapted
+~ Ensure ConfigurationContext.load and Context.load definitions are consistent and remove unused *k parameters
+~ Remove the dependency on optparse and use argparse instead
+- Remove waflib.Runner.PriorityTasks.appendleft
+- Remove waflib.Task.TaskBase
+- Remove the upper class of waflib.Task.Task (metaclass syntax)
+- Remove Winphone/WinCE detection in msvc.py
+- Remove conf.add_as_needed because it does not check for the flag usage
+
+CHANGES IN WAF 2.0.0
+--------------------
+* Provide a new priority system to improve scalability on complex builds
+* Provide TaskGroup objects to improve scalability on complex builds
+* Force new files into the build directory by default (use Node objects to bypass)
+* Provide built-in support for building over UNC paths
+* Simplify the Task class hierarchy; TaskBase is removed
+* Display commands as string with "WAF_CMD_FORMAT=string waf build -v"
+* Have ant_glob(..., generator=True) return a Python generator
+* Accept nested lists and generators in bld(source=...)
+* Sort TaskGen methods in alphabetical order by reversing TaskGen.prec order
+
+- Remove 'ut_fun' from waf_unit_test.py
+- Remove Node.sig and Node.cache_sig
+- Remove the BuildContext.rule decorator
+- Remove Task.update_outputs, Task.always_run
+- Remove atleast-version, exact-version and max-version from conf.check_cfg
+- Remove c_preproc.trimquotes
+- Remove field_name, type_name, function_name from conf.check() tests
+- Remove extras/mem_reducer.py as a better solution has been merged
+- Remove Utils.ex_stack (use traceback.format_exc())

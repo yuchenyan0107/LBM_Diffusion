@@ -1,0 +1,90 @@
+#! /usr/bin/env python
+#
+# several processes can wait on a resource limit
+# in this case the maximum amount of "very busy" tasks is one across several processes
+# also:
+# - this example is posix-only (fcntl)
+# - it assumes that the lock file "busy_lock.txt" is already created by another process
+
+def options(opt):
+	opt.add_option('--loops', action='store', type=int, default=5, help='amount of cpu-intensive loops to perform')
+
+def configure(conf):
+	busy = conf.path.find_node('look_busy.py').abspath()
+	conf.env.NOT_BUSY = ('%s 0' % busy).split()
+	conf.env.VERY_BUSY = ('%s %d' % (busy, conf.options.loops)).split()
+
+def build(bld):
+	bld.link_limit = 1
+	bld.lockfile = bld.path.parent.make_node('busy_lock.txt').abspath()
+	for i in range(2):
+		for k in range(5):
+			bld(rule='${NOT_BUSY}', always=True)
+
+		bld(rule='${VERY_BUSY}', always=True, exclusive=True)
+
+		for k in range(10):
+			bld(rule='${NOT_BUSY}', always=True)
+
+import os, fcntl, threading, errno, time
+from waflib import Task
+
+lock = threading.Lock()
+
+def lock_maxjob(self):
+	# lock the file, telling other build processes to avoid spawining tasks during that time
+	while True:
+		try:
+			# each task/thread will have its own "lockfd"
+			# it is important to not create too many of them
+			if not getattr(self, 'lockfd', None):
+				with lock:
+					self.lockfd = os.open(self.generator.bld.lockfile, os.O_TRUNC | os.O_CREAT | os.O_RDWR)
+			with lock:
+				fcntl.flock(self.lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+		except EnvironmentError as e:
+			if e.errno in (errno.EACCES, errno.EAGAIN):
+				time.sleep(0.3)
+				continue
+			raise
+
+		os.write(self.lockfd, b"%d %s\n" % (os.getpid(), repr(threading.current_thread()).encode()))
+		self.start_time = time.time()
+		break
+
+def release_maxjob(self):
+	# release the lock file
+	with lock:
+		try:
+			fcntl.flock(self.lockfd, fcntl.LOCK_UN)
+			os.close(self.lockfd)
+		except OSError as e:
+			# of someone else has removed the lock... bad luck! but do not fail here
+			pass
+		except Exception as e:
+			print(e)
+		#print("lock released!", threading.current_thread())
+
+# the method process is called by threads...
+def process2(self):
+	if getattr(self.generator, 'exclusive', False):
+		self.lock_maxjob()
+
+	# regular work
+	ret = self.process_bound_maxjobs()
+
+	if getattr(self.generator, 'exclusive', False):
+		self.release_maxjob()
+
+	return ret
+
+def process(self):
+	try:
+		process2(self)
+	except Exception as e:
+		print(type(e), e)
+
+Task.Task.process_bound_maxjobs = Task.Task.process
+Task.Task.process = process
+Task.Task.lock_maxjob = lock_maxjob
+Task.Task.release_maxjob = release_maxjob

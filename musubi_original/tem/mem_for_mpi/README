@@ -1,0 +1,17 @@
+This module provides the possibility to allocate special memory for
+MPI buffers. On some systems, there might be special memory, that
+is better suited for exchange with other processes and which can
+be accessed via the MPI_alloc_mem call.
+Unfortunately, in the old MPI standard (prior MPI-3), the address of this
+allocation is returned as a Cray pointer.
+In MPI-3 a c_ptr is returned (either in the mpi_f08 module or via a
+generic interface in the traditional mpi module), but it is not commonly
+available yet.
+Thus, we are using some wrapper here to provide the c_ptr in
+either case.
+If MPI-3 is available, its capabilities are used (mpi_f08 if supported,
+mpi otherwise), if the MPI_Alloc_mem is not available with a c_ptr via
+MPI directly, we use a small C-wrapper to invoke the C-interface directly
+and obtain a c_ptr.
+This requires a MPI C compiler.
+If this is also not available, we just fall back to a normal malloc call.

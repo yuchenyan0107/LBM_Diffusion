@@ -1,0 +1,17 @@
+This directory contains the implementation of a variable system,
+that allows the description of data in simulation and their
+relations.
+The main module here is the tem_varSys_module, which defines the variable
+system datatype and the abstract interfaces to use in the implementation
+of routines for the actual implementation of variable value retrieval.
+
+The variable system is based on the idea to use a generic C-pointer to pass
+solver specific data through the interfaces to routines provided again by the
+solvers.
+Variables are simply identified by their label and might depend on other
+variables, make use of a space-time function or simply refer to data in the
+state of the solver.
+
+In the tem_variable_module you find the description of user defined variables,
+and in the tem_varMap_module, a datatype is provided that can be used to
+describe a subset of variables out of variable systems.
