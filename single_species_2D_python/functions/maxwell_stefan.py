@@ -1,16 +1,62 @@
+"""
+Maxwell–Stefan lattice Boltzmann operators for multispecies diffusion (MRT).
+
+Overview and references
+-----------------------
+- This module ports the MIXLBM Fortran reference (see
+  `matlab_example/MIXLBM_rome08/MIXLBM.f90`) using the same θ-splitting
+  strategy and notation. The intended theoretical reference is the
+  accompanying PDF "Multi-species Lattice Boltzmann Models and Practical
+  Examples" (Asinari et al.).
+- The Maxwell–Stefan coupling is enforced by a linear system on the species
+  mass fluxes; the LBM collision operator is handled with an MRT matrix ``A``
+  and the θ-transform ``G = (I + θ A)^{-1}`` (called TRANS in the Fortran).
+- Notation kept from MIXLBM:
+    σ -> species index
+    k -> lattice direction (D2Q9)
+    rsigma, psigma -> densities and partial pressures per species
+    uxsigma, uysigma -> velocity components per species
+    λ (lamd), ν (lamn), ζ (lamb) -> MRT relaxation frequencies
+    χ -> Maxwell–Stefan resistivities between species
+    θ -> splitting parameter (0.5 for second order)
+
+Where equations map conceptually (PDF)
+-------------------------------------
+- Hydrodynamic moments (ρ, ρu): standard D2Q9 zeroth/first moments of f.
+- Equilibrium feq: low-Mach equilibrium with pressure factor φσ.
+- MRT collision: linear operator A (see MIXLBM subroutine `MRT`).
+- θ-splitting: construct G = (I + θ A)^{-1} and apply half-steps in f-space.
+- Maxwell–Stefan: χ tensor and flux-coupling linear system in species space.
+
+Equation numbers may differ between PDF versions; where possible the comments
+point to the named relations (θ-transform, MRT, Maxwell–Stefan χ-coupling)
+rather than a fixed numbering.
+"""
+
 import numpy as np
 
 
+# Discrete velocities for the D2Q9 lattice stencil.
 D2Q9_CX = np.array([0, 1, 0, -1, 0, 1, -1, -1, 1], dtype=np.int64)
 D2Q9_CY = np.array([0, 0, 1, 0, -1, 1, 1, -1, -1], dtype=np.int64)
+# Bounce-back mapping: index of the direction opposite to k.
 BB_OPPOSITE = np.array([0, 3, 4, 1, 2, 7, 8, 5, 6], dtype=np.int64)
+# θ parameter for the splitting scheme (0.5 -> second order accuracy).
 THETA = 0.5
 
 
 def hydrodynamic_moments(distribution: np.ndarray) -> tuple[float, float, float]:
-    """
-    Compute density and velocity components for a D2Q9 population.
-    """
+    '''Compute density and velocity components for a single species.
+
+    Parameters
+    ----------
+    distribution:
+        Array of the nine populations f_k at one lattice node.
+
+    Returns
+    -------
+    rho, ux, uy:
+        Zeroth and first-order moments of f_k (density and velocities).'''
     rho = np.sum(distribution)
     if rho <= 0.0:
         return 0.0, 0.0, 0.0
@@ -21,9 +67,21 @@ def hydrodynamic_moments(distribution: np.ndarray) -> tuple[float, float, float]
 
 
 def equilibrium_distribution(rho: float, phi: float, ux: float, uy: float) -> np.ndarray:
-    """
-    Maxwellian equilibrium for multispecies LBM (D2Q9).
-    """
+    '''Construct the multispecies equilibrium distribution on D2Q9.
+
+    Parameters
+    ----------
+    rho:
+        Species density ρ_σ.
+    phi:
+        Equation-of-state factor φ_σ (relates pressure and density).
+    ux, uy:
+        Velocity components for the equilibrium.
+
+    Returns
+    -------
+    np.ndarray:
+        Equilibrium populations f_eq,k.'''
     u_sq = ux * ux + uy * uy
 
     feq = np.empty(9, dtype=np.float64)
@@ -51,10 +109,21 @@ def equilibrium_distribution(rho: float, phi: float, ux: float, uy: float) -> np
 
 
 def mrt_matrix(lamd: float, lamn: float, lamb: float) -> np.ndarray:
-    """
-    Collision matrix A (velocity space) used by the θ-splitting scheme.
-    Direct port of MIXLBM.f90::MRT.
-    """
+    '''Build the velocity-space collision matrix A for the MRT operator.
+
+    Parameters
+    ----------
+    lamd:
+        Relaxation frequency for density-like moments.
+    lamn:
+        Relaxation frequency for shear moments.
+    lamb:
+        Relaxation frequency for bulk moments.
+
+    Returns
+    -------
+    np.ndarray:
+        9x9 collision matrix matching MIXLBM.f90::MRT.'''
     lam0 = 0.0
     lam34 = 1.0
 
@@ -130,12 +199,25 @@ def mrt_matrix(lamd: float, lamn: float, lamb: float) -> np.ndarray:
 
 
 def theta_transformation(lamd: float, lamn: float, lamb: float, theta: float = THETA) -> np.ndarray:
-    """
-    (I + theta A)^-1 matrix used in the θ-splitting solver.
-    """
+    '''Construct (I + θA)^-1, the matrix used in the θ-splitting solver.
+
+    Parameters
+    ----------
+    lamd, lamn, lamb:
+        Relaxation rates used when creating the MRT collision matrix.
+    theta:
+        Splitting parameter; default keeps parity with MIXLBM (0.5).
+
+    Returns
+    -------
+    np.ndarray:
+        Inverse transformation matrix applied to moments.'''
+    
     lam0 = 0.0
     lam34 = 1.0
 
+    # Matrix G is the discrete analog of the θ-transform used to advance
+    # the linear collision operator with second-order accuracy.
     G = np.zeros((9, 9), dtype=np.float64)
 
     lamd_theta = lamd * theta
@@ -248,6 +330,21 @@ def theta_transformation(lamd: float, lamn: float, lamb: float, theta: float = T
 
 
 def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
+    """
+    Maxwell–Stefan binary resistivity lookup B(σ, ν).
+
+    Parameters
+    ----------
+    m1, m2:
+        Molecular weights of the interacting species.
+    nB:
+        Index (1-based) into the empirical resistivity table.
+
+    Returns
+    -------
+    float:
+        Resistivity value consistent with MIXLBM.f90::B.
+    """
     table = np.array(
         [
             0.500000000000000,
@@ -278,6 +375,14 @@ def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
 
 
 def D_fick_diffusivity(m: float) -> float:
+    """
+    Fick diffusivity lookup used by alternative diffusion models.
+
+    Returns
+    -------
+    float:
+        Diffusivity value for species with molecular weight `m`.
+    """
     table = np.array(
         [
             0.010000000000000,
@@ -307,6 +412,14 @@ def D_fick_diffusivity(m: float) -> float:
 
 
 def NU_kinematic_viscosity(nN: int) -> float:
+    """
+    Return ν from the kinematic viscosity lookup table.
+
+    Returns
+    -------
+    float:
+        Kinematic viscosity corresponding to table index `nN`.
+    """
     table = np.array(
         [
             1.0000,
@@ -336,16 +449,50 @@ def NU_kinematic_viscosity(nN: int) -> float:
 
 
 def XI_bulk_viscosity() -> float:
+    """
+    Constant bulk viscosity ξ used in the MRT operator.
+
+    Returns
+    -------
+    float:
+        Constant bulk viscosity (0.4 in lattice units).
+    """
     return 0.4
 
 
 def solve_linear_system(matrix: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    """
+    Solve the dense linear system `matrix @ x = rhs`.
+
+    Used for the θ-splitting correction that couples species fluxes.
+
+    Returns
+    -------
+    np.ndarray:
+        Solution vector x.
+    """
     return np.linalg.solve(matrix, rhs)
 
 
 class MaxwellStefanState:
     """
     Container for the lattice populations and macroscopic fields.
+
+    Parameters
+    ----------
+    num_species:
+        Number of chemical species tracked by the solver.
+    nx, ny:
+        Lattice dimensions.
+
+    Attributes
+    ----------
+    fd, fd_new:
+        Distribution functions f_σ,k before and after collision/streaming.
+    rsigma, psigma:
+        Densities and partial pressures per species.
+    uxsigma, uysigma:
+        Species velocity components stored for diagnostics / reuse.
     """
 
     def __init__(self, num_species: int, nx: int, ny: int):
@@ -362,12 +509,32 @@ def initialise_from_partial_pressures(
     phi: np.ndarray,
     psigma_init: np.ndarray,
 ) -> None:
+    """
+    Populate a `MaxwellStefanState` from prescribed partial pressures.
+
+    Parameters
+    ----------
+    state:
+        Simulation state to initialise in-place.
+    phi:
+        Equation-of-state coefficients φ_σ.
+    psigma_init:
+        Partial pressure field with shape (species, nx, ny).
+
+    Notes
+    -----
+    The routine mirrors MIXLBM's "simple initialization" by loading an equilibrium
+    with zero velocities. It immediately computes the corresponding macroscopic
+    fields for later reuse.
+    """
     num_species, nx, ny = psigma_init.shape
     for s in range(num_species):
+        # Convert partial pressures to densities using ρ_σ = 3 p_σ / φ_σ.
         rho_sigma = 3.0 * psigma_init[s] / phi[s]
         feq = equilibrium_distribution(1.0, phi[s], 0.0, 0.0)
         for i in range(nx):
             for j in range(ny):
+                # Initialise populations with the local equilibrium and cache moments.
                 feq_local = equilibrium_distribution(rho_sigma[i, j], phi[s], 0.0, 0.0)
                 state.fd[s, :, i, j] = feq_local
                 state.fd_new[s, :, i, j] = feq_local
@@ -387,34 +554,76 @@ def maxwell_stefan_step(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Perform one θ-splitting Maxwell–Stefan collision/streaming step.
-    This is a direct translation of MIXLBM.f90 with periodic boundaries.
+
+    Parameters
+    ----------
+    state:
+        Current lattice Boltzmann state (populations read from `state.fd`).
+    phi:
+        Equation-of-state factors φ_σ.
+    molecular_weights:
+        Species molecular weights M_σ.
+    nN, nB:
+        Indices into the viscosity and resistivity lookup tables (1-based,
+        matching the Fortran code).
+    theta:
+        Splitting parameter; defaults to THETA (0.5).
+
+    Returns
+    -------
+    tuple:
+        rsigma_post, ux_mix, uy_mix where rsigma_post are the updated species
+        densities and ux_mix/uy_mix are barycentric velocity components.
+        Boundary handling is periodic; other boundaries need additional logic.
+
+    Algorithmic outline (with equation cues)
+    ---------------------------------------
+    1) Neighbour sampling and moments: gather f at (i+ckx, j+cky) for all k,
+       compute per-species (ρσ, uσ) and mixture fields (ρ, p). [standard LBM
+       moments]
+    2) Maxwell–Stefan drift pre-correction: build χ_{σν} and compute u*_σ =
+       uσ + Σν χ_{σν} x_ν (uν − uσ), where x_ν are species fractions. [MS model]
+    3) First θ half-step (collision in f-space):
+         f* = f − θ A (feq(ρσ, u*_σ) − f)
+       Transform A → Ã = A (I + θ A)^{-1} (via G = (I + θ A)^{-1}) and stream
+       the BB(k) component. [θ-transform, MRT]
+    4) Post-streaming moments (g⁺): compute ρσ, uσ from f_new.
+    5) Maxwell–Stefan coupling: solve the linear system in species space for
+       fluxes jσ using θ-corrected matrix (diagonal term 1 + θ λσ CHIσ − off-diag
+       θ λσ xσ χ_{σν}). Update uσ = jσ / ρσ. [MS linear solve]
+    6) Second θ half-step: map corrected moments back to populations using
+       feq(ρσ, u*_σ) and the same transform G. [θ-transform]
     """
     num_species, _, nx, ny = state.fd.shape
 
     fd = state.fd
     fd_new = np.zeros_like(fd)
 
-    rsigma_local = np.zeros(num_species, dtype=np.float64)
-    psigma_local = np.zeros(num_species, dtype=np.float64)
-    uxsigma_local = np.zeros(num_species, dtype=np.float64)
-    uysigma_local = np.zeros(num_species, dtype=np.float64)
-    uxstar = np.zeros(num_species, dtype=np.float64)
-    uystar = np.zeros(num_species, dtype=np.float64)
-    lambda_sigma = np.zeros(num_species, dtype=np.float64)
-    lamd_sigma = np.zeros(num_species, dtype=np.float64)
-    lamn_sigma = np.zeros(num_species, dtype=np.float64)
-    lamb_sigma = np.zeros(num_species, dtype=np.float64)
-    CHI = np.zeros((num_species, num_species), dtype=np.float64)
+    # Temporary storage reused across lattice links to avoid reallocations.
+    rsigma_local = np.zeros(num_species, dtype=np.float64)  # species densities ρ_σ
+    psigma_local = np.zeros(num_species, dtype=np.float64)  # partial pressures p_σ
+    uxsigma_local = np.zeros(num_species, dtype=np.float64)  # velocity components u_σx
+    uysigma_local = np.zeros(num_species, dtype=np.float64)  # velocity components u_σy
+    uxstar = np.zeros(num_species, dtype=np.float64)  # χ-corrected drift velocity x-component
+    uystar = np.zeros(num_species, dtype=np.float64)  # χ-corrected drift velocity y-component
+    lambda_sigma = np.zeros(num_species, dtype=np.float64)  # Maxwell–Stefan relaxation λ_σ
+    lamd_sigma = np.zeros(num_species, dtype=np.float64)  # MRT λ_d (density mode)
+    lamn_sigma = np.zeros(num_species, dtype=np.float64)  # MRT λ_n (shear mode)
+    lamb_sigma = np.zeros(num_species, dtype=np.float64)  # MRT λ_b (bulk mode)
+    CHI = np.zeros((num_species, num_species), dtype=np.float64)  # resistivity matrix χ_{σν}
 
+    # Transport coefficients used for every lattice node in this call.
     nu_value = NU_kinematic_viscosity(nN)
     xi_value = XI_bulk_viscosity()
 
     for i in range(nx):
         for j in range(ny):
             for k in range(9):
+                # Periodic neighbour reached by lattice direction k.
                 iI = (i + D2Q9_CX[k]) % nx
                 jI = (j + D2Q9_CY[k]) % ny
 
+                # Recover neighbour macroscopic fields for each species.
                 for s in range(num_species):
                     f_neighbor = fd[s, :, iI, jI]
                     rho, ux, uy = hydrodynamic_moments(f_neighbor)
@@ -423,6 +632,7 @@ def maxwell_stefan_step(
                     uxsigma_local[s] = ux
                     uysigma_local[s] = uy
 
+                # Guard against zero density/pressure when forming mixture values.
                 r_mix = np.sum(rsigma_local)
                 p_mix = np.sum(psigma_local)
                 if r_mix <= 0.0:
@@ -430,14 +640,18 @@ def maxwell_stefan_step(
                 if p_mix <= 0.0:
                     p_mix = 1.0
 
+                # Barycentric velocity from species contributions: u = Σσ(ρσ uσ)/ρ.
                 ux_mix = np.dot(rsigma_local, uxsigma_local) / r_mix
                 uy_mix = np.dot(rsigma_local, uysigma_local) / r_mix
 
+                # Mixture molecular weight via harmonic mean of species masses.
                 inv_MM_sum = 0.0
                 for s in range(num_species):
                     inv_MM_sum += (rsigma_local[s] / r_mix) / molecular_weights[s]
                 mixture_mass = 1.0 / inv_MM_sum if inv_MM_sum != 0.0 else 0.0
 
+                # Maxwell–Stefan resistivity coefficients χ_{σν}
+                # (see MIXLBM’s CHI build and PDF MS relations).
                 for s in range(num_species):
                     for vs in range(num_species):
                         resistor = B_binary_resistivity(
@@ -457,6 +671,7 @@ def maxwell_stefan_step(
                             / ref
                         )
 
+                # Drift velocities corrected by χ coupling: u*_σ.
                 for s in range(num_species):
                     uxstar[s] = uxsigma_local[s]
                     uystar[s] = uysigma_local[s]
@@ -465,6 +680,8 @@ def maxwell_stefan_step(
                         uxstar[s] += factor * (uxsigma_local[vs] - uxsigma_local[s])
                         uystar[s] += factor * (uysigma_local[vs] - uysigma_local[s])
 
+                # Relaxation frequencies for MRT collision (lamd, lamn, lamb)
+                # used in the matrix A and transform G.
                 for s in range(num_species):
                     lambda_sigma[s] = p_mix * B_binary_resistivity(
                         molecular_weights[s],
@@ -475,6 +692,8 @@ def maxwell_stefan_step(
                     lamn_sigma[s] = 1.0 / (3.0 * nu_value)
                     lamb_sigma[s] = (2.0 - phi[s]) / (3.0 * xi_value)
 
+                # θ-splitting first half-step (f → g) followed by streaming:
+                # compute f*, then f_coll = f* + Ã (feq − f*), then stream BB(k).
                 for s in range(num_species):
                     f_neighbor = fd[s, :, iI, jI]
                     feq = equilibrium_distribution(
@@ -484,10 +703,12 @@ def maxwell_stefan_step(
                         uystar[s],
                     )
                     A = mrt_matrix(lamd_sigma[s], lamn_sigma[s], lamb_sigma[s])
+                    G = theta_transformation(lamd_sigma[s], lamn_sigma[s], lamb_sigma[s], theta=theta)
                     delta = feq - f_neighbor
-                    f_star = f_neighbor - theta * (A @ delta)
-                    delta_star = feq - f_star
-                    f_coll = f_star + A @ delta_star
+                    f_temp = f_neighbor - theta * (A @ delta)
+                    A_tilde = A @ G
+                    delta_tilde = feq - f_temp
+                    f_coll = f_temp + A_tilde @ delta_tilde
                     fd_new[s, BB_OPPOSITE[k], i, j] = f_coll[BB_OPPOSITE[k]]
 
     rsigma_post = np.zeros((num_species, nx, ny), dtype=np.float64)
@@ -495,15 +716,19 @@ def maxwell_stefan_step(
     uysigma_post = np.zeros_like(rsigma_post)
     psigma_post = np.zeros_like(rsigma_post)
 
+    # Reconstruct moments from post-streaming populations (g⁺ at node (i,j)).
     for i in range(nx):
         for j in range(ny):
+            # Gather post-streaming moments for each species at node (i, j).
             for s in range(num_species):
+                # Post-streaming moments per species (g^+ -> f^+).
                 rho, ux, uy = hydrodynamic_moments(fd_new[s, :, i, j])
                 rsigma_post[s, i, j] = rho
                 uxsigma_post[s, i, j] = ux
                 uysigma_post[s, i, j] = uy
                 psigma_post[s, i, j] = phi[s] * rho / 3.0
 
+            # Rebuild mixture properties at this node.
             r_mix = np.sum(rsigma_post[:, i, j])
             p_mix = np.sum(psigma_post[:, i, j])
             if r_mix <= 0.0:
@@ -511,6 +736,7 @@ def maxwell_stefan_step(
             if p_mix <= 0.0:
                 p_mix = 1.0
 
+            # Mixture molecular weight and MRT frequencies get refreshed.
             inv_MM_sum = 0.0
             for s in range(num_species):
                 inv_MM_sum += (rsigma_post[s, i, j] / r_mix) / molecular_weights[s]
@@ -545,6 +771,7 @@ def maxwell_stefan_step(
                         / ref
                     )
 
+            # χ projections required by the MS linear solver (CHIsigma).
             CHIsigma = np.zeros(num_species, dtype=np.float64)
             for s in range(num_species):
                 temp = 0.0
@@ -552,6 +779,8 @@ def maxwell_stefan_step(
                     temp += CHI[s, vs] * (rsigma_post[vs, i, j] / r_mix)
                 CHIsigma[s] = temp
 
+            # Build the θ-corrected linear system for species fluxes (MS coupling):
+            # diagonal: 1 + θ λσ CHIsigma; off-diagonal: − θ λσ xσ χ_{σν}.
             A_matrix = np.zeros((num_species, num_species), dtype=np.float64)
             for s in range(num_species):
                 for vs in range(num_species):
@@ -566,6 +795,7 @@ def maxwell_stefan_step(
                         * CHI[s, vs]
                     )
 
+            # Flux moments entering the linear solve: g_j = ρσ uσ (per axis).
             gjx = rsigma_post[:, i, j] * uxsigma_post[:, i, j]
             gjy = rsigma_post[:, i, j] * uysigma_post[:, i, j]
 
@@ -576,6 +806,7 @@ def maxwell_stefan_step(
                 uxsigma_post[s, i, j] = jx[s] / rsigma_post[s, i, j] if rsigma_post[s, i, j] > 0 else 0.0
                 uysigma_post[s, i, j] = jy[s] / rsigma_post[s, i, j] if rsigma_post[s, i, j] > 0 else 0.0
 
+            # Re-evaluate drift velocities with the corrected fluxes (u*_σ again).
             for s in range(num_species):
                 uxstar[s] = uxsigma_post[s, i, j]
                 uystar[s] = uysigma_post[s, i, j]
@@ -587,6 +818,7 @@ def maxwell_stefan_step(
                         uysigma_post[vs, i, j] - uysigma_post[s, i, j]
                     )
 
+            # Second θ-half-step: map corrected moments back to populations using G.
             for s in range(num_species):
                 feq = equilibrium_distribution(rsigma_post[s, i, j], phi[s], uxstar[s], uystar[s])
                 A = mrt_matrix(lamd_sigma[s], lamn_sigma[s], lamb_sigma[s])

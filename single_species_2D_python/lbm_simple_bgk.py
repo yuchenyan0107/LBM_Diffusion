@@ -1,19 +1,9 @@
 """
-MRT runner for the Maxwell–Stefan LBM example.
+BGK runner for the Maxwell–Stefan LBM example.
 
-What this script does
----------------------
-- Builds the three-species 1D/2D slab setup used in the Fortran reference.
-- Initialises partial pressures with a tanh profile, converts them to
-  equilibria (zero velocity), and runs the θ-splitting + MRT Maxwell–Stefan
-  step in a loop to demonstrate diffusion and coupling.
-
-Key routines
-------------
-- `initialise_pressures`: reproduces MIXLBM’s hyperbolic-tangent initial data.
-- `initialise_from_partial_pressures`: loads feq(ρσ, 0) into the distributions.
-- `maxwell_stefan_step`: performs one θ-split step with MRT collisions; see
-  comments in `functions/maxwell_stefan.py` for detailed per-step notes.
+This is identical to `lbm_simple.py` in setup but calls the BGK-based step
+(`maxwell_stefan_bgk_step`) instead of the MRT one, illustrating that the
+Maxwell–Stefan θ-splitting works without MRT.
 """
 
 import numpy as np
@@ -21,16 +11,16 @@ import numpy as np
 from functions.maxwell_stefan import (
     MaxwellStefanState,
     initialise_from_partial_pressures,
-    maxwell_stefan_step,
 )
+from functions.maxwell_stefan_bgk import maxwell_stefan_bgk_step
 
 
 def initialise_pressures(nx: int, ny: int, num_species: int, molecular_weights: np.ndarray) -> np.ndarray:
     """
     Reproduce the hyperbolic tangent initialisation from MIXLBM.f90.
 
-    This prescribes species partial pressures pσ(x) which the solver converts
-    to densities via ρσ = 3 pσ / φσ (see `initialise_from_partial_pressures`).
+    Same as the MRT runner; the solver converts these to densities via
+    ρσ = 3 pσ / φσ at initialisation.
     """
     psigma = np.zeros((num_species, nx, ny), dtype=np.float64)
     for i in range(nx):
@@ -63,13 +53,13 @@ def main() -> None:
         if step % output_stride == 0:
             rsigma = state.rsigma
             rho_means = np.mean(rsigma, axis=(1, 2))
-            print(f"step {step:6d} mean densities: " + ", ".join(f"{value:.6f}" for value in rho_means))
+            print(f"[BGK] step {step:6d} mean densities: " + ", ".join(f"{value:.6f}" for value in rho_means))
 
         if step == iterations:
             break
 
-        # One θ-splitting step with MRT collision and MS coupling.
-        maxwell_stefan_step(
+        # One θ-splitting step with BGK collision and MS coupling.
+        maxwell_stefan_bgk_step(
             state,
             phi=phi,
             molecular_weights=molecular_weights,
