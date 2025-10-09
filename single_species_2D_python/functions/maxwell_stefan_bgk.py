@@ -101,7 +101,14 @@ def maxwell_stefan_bgk_step(
         for j in range(ny):
             for k in range(9):
                 iI = (i + D2Q9_CX[k]) % nx
-                jI = (j + D2Q9_CY[k]) % ny
+                jI = j + D2Q9_CY[k]
+
+                if jI < 0 or jI >= ny:
+                    # Bounce-back on the horizontal walls: reflect the population
+                    # hitting the boundary without wrapping around in y.
+                    for s in range(num_species):
+                        fd_new[s, BB_OPPOSITE[k], i, j] = fd[s, k, i, j]
+                    continue
 
                 # Recover neighbour moments per species.
                 for s in range(num_species):
