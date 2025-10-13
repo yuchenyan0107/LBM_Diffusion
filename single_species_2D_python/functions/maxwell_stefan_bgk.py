@@ -27,10 +27,72 @@ from .maxwell_stefan import (
     THETA,
     B_binary_resistivity,
     MaxwellStefanState,
-    equilibrium_distribution,
-    hydrodynamic_moments,
+    #equilibrium_distribution,
+    #hydrodynamic_moments,
     solve_linear_system,
 )
+
+def hydrodynamic_moments(distribution: np.ndarray) -> tuple[float, float, float]:
+    '''Compute density and velocity components for a single species.
+
+    Parameters
+    ----------
+    distribution:
+        Array of the nine populations f_k at one lattice node.
+
+    Returns
+    -------
+    rho, ux, uy:
+        Zeroth and first-order moments of f_k (density and velocities).'''
+    rho = np.sum(distribution)
+    if rho <= 0.0:
+        return 0.0, 0.0, 0.0
+
+    ux = np.dot(D2Q9_CX, distribution) / rho
+    uy = np.dot(D2Q9_CY, distribution) / rho
+    return rho, ux, uy
+
+
+def equilibrium_distribution(rho: float, phi: float, ux: float, uy: float) -> np.ndarray:
+    '''Construct the multispecies equilibrium distribution on D2Q9.
+
+    Parameters
+    ----------
+    rho:
+        Species density ρ_σ.
+    phi:
+        Equation-of-state factor φ_σ (relates pressure and density).
+    ux, uy:
+        Velocity components for the equilibrium.
+
+    Returns
+    -------
+    np.ndarray:
+        Equilibrium populations f_eq,k.'''
+    u_sq = ux * ux + uy * uy
+
+    feq = np.empty(9, dtype=np.float64)
+    feq[0] = (4.0 / 9.0) * rho * ((9.0 - 5.0 * phi) / 4.0 - 1.5 * u_sq)
+
+    cu = ux
+    feq[1] = (1.0 / 9.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+    cu = uy
+    feq[2] = (1.0 / 9.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+    cu = -ux
+    feq[3] = (1.0 / 9.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+    cu = -uy
+    feq[4] = (1.0 / 9.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+
+    cu = ux + uy
+    feq[5] = (1.0 / 36.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+    cu = -ux + uy
+    feq[6] = (1.0 / 36.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+    cu = -ux - uy
+    feq[7] = (1.0 / 36.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+    cu = ux - uy
+    feq[8] = (1.0 / 36.0) * rho * (phi + 3.0 * cu + 4.5 * cu * cu - 1.5 * u_sq)
+
+    return feq
 
 
 def _theta_split_bgk(populations: np.ndarray, feq: np.ndarray, lam: float, theta: float) -> np.ndarray:
@@ -101,7 +163,14 @@ def maxwell_stefan_bgk_step(
         for j in range(ny):
             for k in range(9):
                 iI = (i + D2Q9_CX[k]) % nx
-                jI = (j + D2Q9_CY[k]) % ny
+                jI = j + D2Q9_CY[k]
+
+                if jI < 0 or jI >= ny:
+                    # Bounce-back on the horizontal walls: reflect the population
+                    # hitting the boundary without wrapping around in y.
+                    for s in range(num_species):
+                        fd_new[s, BB_OPPOSITE[k], i, j] = fd[s, k, i, j]
+                    continue
 
                 # Recover neighbour moments per species.
                 for s in range(num_species):
