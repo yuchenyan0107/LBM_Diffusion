@@ -148,6 +148,11 @@ def bgk_step(
     # Streaming with walls in y
     f_streamed = stream_fn(f)
 
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f_streamed, phi)
+    m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weights)
+    CHI_sc = calculate_CHI(m_mix, molecular_weights, nB)
+    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weights, nB)
+
     # Maxwell–Stefan coupling after streaming
     Chi_S = post_stream_Chi_S(CHI_sc, rho_s, rho_mix)
     ux_dagger, uy_dagger, _, _ = solve_ms_fluxes(
@@ -175,7 +180,7 @@ def save_frame(concA: np.ndarray, frame_idx: int, out_dir: Path) -> None:
     ax.set_ylabel("y")
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
-    fig.savefig(out_dir / f"frame_{frame_idx:04d}.png", dpi=160)
+    fig.savefig( f"demo_frames/frame_{frame_idx:04d}.png", dpi=160)
     plt.close(fig)
 
 
@@ -183,21 +188,23 @@ def main():
     config = Config()
 
     # Output directory for frames
-    out_dir = Path(__file__).resolve().parent / config.frames_dir
-    ensure_dir(out_dir)
+    #out_dir = Path(__file__).resolve().parent / config.frames_dir
+    #ensure_dir(out_dir)
+
+    out_dir = 'demo_frames'
 
     # Setup
     f, phi = initialise_stripe(config)
     molecular_weights = np.array(config.molecular_weights, dtype=np.float64)
 
     # Run
-    for step in range(config.steps + 1):
+    for step in tqdm(range(config.steps + 1)):
         # Diagnostics and frame writing
-        if step % config.output_stride == 0:
+        if step % config.output_stride == 1:
             rho_s, _, _, rho_mix, _ = calculate_moment(f, phi)
             rho_mix_safe = np.where(rho_mix > 0.0, rho_mix, 1.0)
             concA = rho_s[0] / rho_mix_safe
-            save_frame(concA, step // config.output_stride, out_dir)
+            save_frame(concA, step, out_dir)
 
         if step == config.steps:
             break

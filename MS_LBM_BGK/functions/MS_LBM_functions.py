@@ -33,6 +33,8 @@ def calculate_m_mix(rho_s, rho_mix, molecular_weight):
 
     inv_M_sum = np.sum(rho_s / ( molecular_weight[:, None, None] * rho_mix[None, :, :] ), axis = 0)
 
+    m_mix = np.divide()
+
     return np.clip(1/inv_M_sum, a_min = 0, a_max= np.inf)
 
 def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
