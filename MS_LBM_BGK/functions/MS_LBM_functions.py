@@ -5,7 +5,7 @@ D2Q9_CY = np.array([0, 1, 1, 0, -1, -1, -1, 0, 1], dtype=np.int64)
 
 w = np.array([4/9, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36])
 #w = np.array([4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36])
-OPPOSITE = np.array([0, 3, 4, 1, 2, 7, 8, 5, 6], dtype=np.int64)
+OPPOSITE = np.array([0,5,6,7,8,1,2,3,4], dtype=np.int64)
 theta = 0.5
 
 
@@ -165,8 +165,8 @@ def equilibrium(f, rho_s, phi, ux_star_s, uy_star_s):
 
 def calculate_g_dagger(f, feq, lambda_s):
 
-    g_s = f - theta * lambda_s[:, None, None, None] * (feq - f)
-    g_dagger = g_s + (lambda_s/(1 + theta * lambda_s))[:, None, None, None] * (feq - g_s)
+    g_s = f - theta * lambda_s[:, None, :, :] * (feq - f)
+    g_dagger = g_s + (lambda_s/(1 + theta * lambda_s))[:, None, :, :] * (feq - g_s)
 
     return g_dagger
 
@@ -265,3 +265,48 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = np.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
+def bgk_step(f, molecular_weight, phi, nB):
+
+    #################### Before streaming ####################
+
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
+
+    m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
+
+    CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
+
+    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
+
+    ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
+
+    feq = equilibrium(f, rho_s, phi, ux_star_s, uy_star_s)
+
+    print(feq.shape)
+
+    g_dagger_s =calculate_g_dagger(f, feq, lambda_s)
+
+    print(g_dagger_s.shape)
+
+    #################### After streaming ####################
+
+    f_streamed = lattice_stream(f)
+
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f_streamed, phi)
+
+    m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
+
+    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
+
+    CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
+
+    Chi_S = post_stream_Chi_S(CHI_sc, rho_s, rho_mix)
+
+    ux_dagger, uy_dagger, jx_s, jy_s = solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=theta)
+
+    ux_star_dagger_s, uy_star_dagger_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_dagger, uy_dagger)
+
+    feq_dagger = equilibrium(f_streamed, rho_s, phi, ux_star_dagger_s, uy_star_dagger_s)
+
+    f_new = distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s)
+
+    return f_new
