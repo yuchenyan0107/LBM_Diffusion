@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
+#from MS_LBM_BGK.MS_LBM import molecular_weight
 from functions.MS_LBM_functions import (
     D2Q9_CX,
     D2Q9_CY,
@@ -19,8 +20,9 @@ from functions.MS_LBM_functions import (
     post_stream_Chi_S,
     distribution_semi_implicit,
     solve_ms_fluxes,
+    lattice_stream,
 )
-
+from tqdm import tqdm
 
 def lattice_stream_bounce_xy(f: np.ndarray) -> np.ndarray:
     """Stream with bounce-back on all four boundaries (no-slip walls).
@@ -47,22 +49,22 @@ def lattice_stream_bounce_xy(f: np.ndarray) -> np.ndarray:
                     out[:, OPPOSITE[k], i, j] += f[:, k, i, j]
     return out
 
-
 @dataclass
 class Config:
-    nx: int = 60
-    ny: int = 24
-    steps: int = 240
-    output_stride: int = 12
+    nx: int = 200
+    ny: int = 100
+    steps: int = 1000
+    output_stride: int = 50
     molecular_weights: tuple[float, float, float] = (28.0, 2.0, 44.0)  # N2, H2, CO2
     # Left half: 50% N2 + 50% H2, Right half: 50% N2 + 50% CO2
-    left_frac: tuple[float, float, float] = (0.5, 0.5, 0.0)
-    right_frac: tuple[float, float, float] = (0.5, 0.0, 0.5)
+    #left_frac: tuple[float, float, float] = (0.5, 0.5, 0.0)
+    #right_frac: tuple[float, float, float] = (0.5, 0.0, 0.5)
+    left_frac: tuple[float, float, float] = (0.5, 0.4, 0.1)
+    right_frac: tuple[float, float, float] = (0.5, 0.1, 0.4)
     total_pressure: float = 1.0
     theta: float = THETA
-    nB: int = 15
+    nB: int = 10
     frames_dir: str = "demo_frames/three_species_mixing"
-
 
 def initialise_chamber(config: Config):
     nx, ny = config.nx, config.ny
@@ -90,7 +92,6 @@ def initialise_chamber(config: Config):
     feq = equilibrium(f, rho_s, phi, ux_s, uy_s)
     f[...] = feq
     return f, phi
-
 
 def bgk_step(
     f: np.ndarray,
@@ -138,49 +139,37 @@ def bgk_step(
     f_new = distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s)
     return f_new
 
-
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
-def save_concentration_frames(f: np.ndarray, phi: np.ndarray, frame_idx: int, out_dir: Path) -> None:
+def save_concentration_frames(f: np.ndarray, phi: np.ndarray, frame_idx: int, out_dir: Path, molecular_weights) -> None:
     rho_s, _, _, rho_mix, _ = calculate_moment(f, phi)
     rho_mix_safe = np.where(rho_mix > 0.0, rho_mix, 1.0)
-    conc = rho_s / rho_mix_safe[None, :, :]
+    conc = rho_s #/ rho_mix_safe[None, :, :]
 
     labels = ["N2", "H2", "CO2"]
     cmaps = ["Blues", "Greens", "Reds"]
 
     fig, axes = plt.subplots(3, 1, figsize=(6, 9), sharex=True, sharey=True)
     for s in range(3):
-        im = axes[s].imshow(conc[s].T, origin="lower", cmap=cmaps[s], aspect="auto")
+        im = axes[s].imshow((conc[s].T)/molecular_weights[s], origin="lower", cmap=cmaps[s], aspect="auto")
         axes[s].set_title(f"{labels[s]} concentration")
         axes[s].set_xlabel("x")
         axes[s].set_ylabel("y")
         fig.colorbar(im, ax=axes[s], fraction=0.046, pad=0.04)
     fig.tight_layout()
-    fig.savefig(out_dir / f"frame_{frame_idx:04d}.png", dpi=160)
+    fig.savefig(f"demo_frames_triple/frame_{frame_idx:04d}.png", dpi=160)
     plt.close(fig)
-
 
 def main():
     cfg = Config()
-    out_dir = Path(__file__).resolve().parent / cfg.frames_dir
-    ensure_dir(out_dir)
+    out_dir = 'demo_frames'
 
     f, phi = initialise_chamber(cfg)
     molecular_weights = np.array(cfg.molecular_weights, dtype=np.float64)
 
-    for step in range(cfg.steps + 1):
+    for step in tqdm(range(cfg.steps + 1)):
         if step % cfg.output_stride == 0:
-            save_concentration_frames(f, phi, step // cfg.output_stride, out_dir)
+            save_concentration_frames(f, phi, step, out_dir, molecular_weights)
         if step == cfg.steps:
             break
         f = bgk_step(f, phi, molecular_weights, nB=cfg.nB, theta=cfg.theta)
 
     print(f"Saved frames to {out_dir}")
-
-
-if __name__ == "__main__":
-    main()
-
