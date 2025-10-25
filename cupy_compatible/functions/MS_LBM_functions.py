@@ -1,5 +1,5 @@
 import numpy as np
-
+import matplotlib.pyplot as plt
 use_cupy = True
 
 if use_cupy:
@@ -16,11 +16,10 @@ else:
     xp = np
 
 
-D2Q9_CX = xp.array([0, 0, 1, 1, 1, 0, -1, -1, -1], dtype=xp.int64)
+D2Q9_CX = xp.array([0, 0, 1, 1, 1, 0, -1, -1, -1], dtype=xp.int64) # CW: up, ur, r, dr, d.....
 D2Q9_CY = xp.array([0, 1, 1, 0, -1, -1, -1, 0, 1], dtype=xp.int64)
 
 w = xp.array([4/9, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36])
-#w = xp.array([4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36])
 OPPOSITE = xp.array([0,5,6,7,8,1,2,3,4], dtype=xp.int64)
 theta = 0.5
 
@@ -40,36 +39,159 @@ def _safe_divide(numerator, denominator, mask=None):
 def lattice_stream(f):
 
     f_streamed = xp.zeros_like(f)
-    for i in range(w.shape[0]):
+    for i in range(w.shape[0]): # for each species
         f_streamed[:, i, :, :] = xp.roll(f[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
 
     return f_streamed
 
-def lattice_stream_bounce_xy(f):
-    """Stream with bounce-back on all four boundaries (no-slip walls).
+def lattice_stream_BC_full(g_dagger_s, phi, step):
 
-    For each direction k, if the target (i+cx[k], j+cy[k]) is outside the
-    domain, reflect into the opposite direction at (i, j). Otherwise, stream
-    into the interior target.
+    g_streamed = xp.zeros_like(g_dagger_s)
+    for i in range(w.shape[0]):
+        g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
+
+    #bottom absorption:
+
+    b1 = xp.array([100, 0, 0])
+    b2 = xp.array([1, 1, 1])
+    b3 = xp.array([0, 1.8, 39.6])
+    '''
+    b1 = xp.array([0, 0, 0])
+    b2 = xp.array([1, 1, 1])
+    b3 = xp.array([42, 1.8, 39.6]) * 1.1
+    '''
+    dx = 1
+    ne = 1
+
+    for s in range(g_dagger_s.shape[0]):
+
+        if b1[s] == 0:
+            C_w_bottom = xp.ones(g_dagger_s.shape[2]) * b3[s]/b2[s]
+
+        else:
+            C_f_bottom = xp.sum(g_dagger_s[s, :, :, 0], axis=0)  # last component, bottom row
+
+            C_w_bottom = (C_f_bottom + ne* dx * b3[s] / b1[s] /2) / (1 + ne * dx * b2[s] /b1[s] /2)
+
+        f_w_bottom = eq_single_boundary(C_w_bottom, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
+
+        if s == 0:
+
+            g_streamed[s, 1, :, 0] = -g_dagger_s[s, 5, :, 0] + 2 * f_w_bottom[1]
+            g_streamed[s, 2, :, 0] = -g_dagger_s[s, 6, :, 0] + 2 * f_w_bottom[2]
+            g_streamed[s, 8, :, 0] = -g_dagger_s[s, 4, :, 0] + 2 * f_w_bottom[8]
+
+
+    # top:
+
+    b2 = xp.array([1, 1, 1])
+    b3 = xp.array([42, 1.8, 39.6])
+
+    for s in range(g_dagger_s.shape[0]):
+        C_w_top = xp.ones(g_dagger_s.shape[2]) * b3[s] / b2[s]
+        f_w_bottom = eq_single_boundary(C_w_top, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
+
+        if s ==0:
+
+            g_streamed[s, 5, :, -1] = -g_dagger_s[s, 1, :, -1] + 2 * f_w_bottom[5]
+            g_streamed[s, 6, :, -1] = -g_dagger_s[s, 2, :, -1] + 2 * f_w_bottom[6]
+            g_streamed[s, 4, :, -1] = -g_dagger_s[s, 8, :, -1] + 2 * f_w_bottom[4]
+        '''
+        if s == 0:
+
+            print(xp.mean(C_w_top))
+            print(np.mean(xp.sum(g_dagger_s[s, :, :, 0], axis=0)))
+            print(xp.mean(g_dagger_s[s, 1, :, -1]))
+            print(xp.mean(xp.sum(f_w_bottom, axis = 0)))
+            print("####################")
+        '''
+
+    if step % 200 == 0:
+        molecular_weight = xp.array([28.0, 2.0, 44.0])
+        nB = 2
+        rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
+        m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
+
+        CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
+
+        ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
+
+        plot_vector(cp.asnumpy(ux_star_s[2, :, :]), cp.asnumpy(uy_star_s[2, :, :]), zoom = 2)
+        #plt.plot(cp.asnumpy(ux_star_s[0, :, :])[:, 200])
+
+    return g_streamed
+
+
+
+def plot_vector(ux, uy, skip=10, scale=1, cmap='viridis', show_bg=False, dx=1.0, dy=1.0, zoom = None):
     """
-    num_species, q, nx, ny = f.shape
-    out = xp.zeros_like(f)
-    for k in range(q):
-        dx = int(D2Q9_CX[k])
-        dy = int(D2Q9_CY[k])
-        if dx == 0 and dy == 0:
-            out[:, k, :, :] += f[:, k, :, :]
-            continue
-        for i in range(nx):
-            ii = i + dx
-            for j in range(ny):
-                jj = j + dy
-                if (0 <= ii < nx) and (0 <= jj < ny):
-                    out[:, k, ii, jj] += f[:, k, i, j]
-                else:
-                    out[:, int(OPPOSITE[k]), i, j] += f[:, k, i, j]
-    return out
+    Plot a 2D vector field where ux, uy have shape (nx, ny) = (x, y).
+    - x increases left→right, y increases bottom→top.
+    - Arrows colored by speed |u|.
+    """
+    ux = np.asarray(ux)
+    uy = np.asarray(uy)
+    if ux.shape != uy.shape or ux.ndim != 2:
+        raise ValueError("ux and uy must be 2D arrays with the same shape (nx, ny).")
 
+    nx, ny = ux.shape
+    x = np.arange(nx) * dx
+    y = np.arange(ny) * dy
+
+    # Build grid in standard plotting orientation (rows = y, cols = x)
+    X, Y = np.meshgrid(x, y, indexing='xy')      # shapes (ny, nx)
+
+    # Transpose velocity components to match (ny, nx)
+    U = ux.T                                     # (ny, nx)
+    V = uy.T                                     # (ny, nx)
+
+    # Thinning
+    s = max(1, int(skip))
+    Xs, Ys = X[::s, ::s], Y[::s, ::s]
+    Us, Vs = U[::s, ::s] * zoom, V[::s, ::s] * zoom
+    speed = np.hypot(Us, Vs)
+
+    fig, ax = plt.subplots(figsize=(7, 5), dpi=150)
+
+    if show_bg:
+        bg = np.hypot(ux, uy).T                  # (ny, nx)
+        ax.imshow(
+            bg, origin='lower',
+            extent=[x.min(), x.max(), y.min(), y.max()],
+            alpha=0.35, cmap=cmap
+        )
+
+    q = ax.quiver(
+        Xs, Ys, Us, Vs, speed,
+        angles='xy', scale_units='width', scale=scale,
+        width=0.003, headwidth=3, headlength=4, cmap=cmap
+    )
+
+    ax.set_aspect('equal')
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title('Velocity field (color = |u|)')
+    fig.colorbar(q, ax=ax, label='speed')
+
+    plt.tight_layout()
+    plt.show()
+    return fig, ax
+
+
+def eq_single_boundary(C_w, phi_s, ux_star, uy_star):
+    u_sq = ux_star ** 2 + uy_star ** 2  # (nx or...y...)
+    cu = D2Q9_CX[:, None] * ux_star[None, :] + D2Q9_CY[:, None] * uy_star[None, :]
+
+    f_w_eq = w[:, None] * C_w[None, :] * (
+            phi_s
+            + 3 * cu
+            + 4.5 * cu ** 2
+            - 1.5 * u_sq
+    )
+
+    f_w_eq[0, :] = w[0] * C_w * ((9 - 5 * phi_s) / 4 - 1.5 * u_sq)
+
+    return f_w_eq
 
 def calculate_moment(f, phi):
 
@@ -167,19 +289,6 @@ def calculate_lambda(rho_mix, p_mix, molecular_weight, nB):
 
     return lambda_s
 
-'''
-def calculate_u_star_original(CHI_sc, rho_s, rho_mix, ux_s, uy_s):
-    N_species = rho_s.shape[0]
-    nx, ny = rho_mix.shape
-    ux_star_s = xp.zeros((N_species, nx, ny))
-    uy_star_s = xp.zeros((N_species, nx, ny))
-    for s in range(N_species):
-        delta_ux = ux_s[s][None,:] - ux_s[:]
-        delta_uy = uy_s[s][None,:] - uy_s[:]
-        ux_star_s[s] = ux_s[s] + xp.sum(CHI_sc[s, :, :, :] * rho_s * delta_ux, axis = 0)
-        uy_star_s[s] = uy_s[s] + xp.sum(CHI_sc[s, :, :, :] * rho_s * delta_uy, axis = 0)
-    return ux_star_s, uy_star_s
-'''
 def calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s):
     """
     Compute the modified species velocities u* used in the BGK half-step.
@@ -316,13 +425,17 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = xp.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
-def bgk_step(f, molecular_weight, phi, nB, stream_fn):
+def bgk_step(f, molecular_weight, phi, nB, stream_fn, step):
 
     #################### Before streaming ####################
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
+    '''
+    if step%50==0:
+        plt.plot(cp.asnumpy(rho_s)[0, :, 200])
+        plt.show()
+    '''
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
-
     CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
     lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
 
@@ -333,9 +446,10 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn):
 
     #################### After streaming ####################
 
-    f_streamed = stream_fn(f)
+    g_streamed = lattice_stream_BC_full(g_dagger_s, phi, step)
+    #g_streamed = lattice_stream(g_dagger_s)
 
-    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f_streamed, phi)
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
 
     lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
@@ -346,7 +460,7 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn):
 
     ux_star_dagger_s, uy_star_dagger_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_dagger, uy_dagger)
 
-    feq_dagger = equilibrium(f_streamed, rho_s, phi, ux_star_dagger_s, uy_star_dagger_s)
-    f_new = distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s)
+    feq_dagger = equilibrium(g_streamed, rho_s, phi, ux_star_dagger_s, uy_star_dagger_s)
+    f_new = distribution_semi_implicit(feq_dagger, g_streamed, lambda_s)
 
     return f_new
