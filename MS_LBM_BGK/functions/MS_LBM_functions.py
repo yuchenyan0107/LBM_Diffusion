@@ -17,6 +17,32 @@ def lattice_stream(f):
 
     return f_streamed
 
+def lattice_stream_bounce_xy(f: np.ndarray) -> np.ndarray:
+    """Stream with bounce-back on all four boundaries (no-slip walls).
+
+    For each direction k, if the target (i+cx[k], j+cy[k]) is outside the
+    domain, reflect into the opposite direction at (i, j). Otherwise, stream
+    into the interior target.
+    """
+    num_species, q, nx, ny = f.shape
+    out = np.zeros_like(f)
+    for k in range(q):
+        dx = int(D2Q9_CX[k])
+        dy = int(D2Q9_CY[k])
+        if dx == 0 and dy == 0:
+            out[:, k, :, :] += f[:, k, :, :]
+            continue
+        for i in range(nx):
+            ii = i + dx
+            for j in range(ny):
+                jj = j + dy
+                if (0 <= ii < nx) and (0 <= jj < ny):
+                    out[:, k, ii, jj] += f[:, k, i, j]
+                else:
+                    out[:, OPPOSITE[k], i, j] += f[:, k, i, j]
+    return out
+
+
 def calculate_moment(f, phi):
 
     rho_s = np.sum(f, axis = 1)
@@ -31,9 +57,16 @@ def calculate_moment(f, phi):
 
 def calculate_m_mix(rho_s, rho_mix, molecular_weight):
 
-    inv_M_sum = np.sum(rho_s / ( molecular_weight[:, None, None] * rho_mix[None, :, :] ), axis = 0)
+    divider_inv_M = np.zeros_like(rho_s)
+    np.divide(rho_s, ( molecular_weight[:, None, None] * rho_mix[None, :, :] ), out = divider_inv_M, where = ( molecular_weight[:, None, None] * rho_mix[None, :, :] ) > 0)
 
-    return np.clip(1/inv_M_sum, a_min = 0, a_max= np.inf)
+    #inv_M_sum = np.sum(rho_s / ( molecular_weight[:, None, None] * rho_mix[None, :, :] ), axis = 0)
+    inv_M_sum = np.sum(divider_inv_M, axis = 0)
+
+    m_mix = np.zeros_like(rho_mix)
+    np.divide(1, inv_M_sum, out = m_mix, where = inv_M_sum > 0)
+
+    return m_mix
 
 def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
     """
@@ -185,6 +218,8 @@ def distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s):
         / ((1 + theta * lambda_s)[:, None, :, :])
     )
 
+    f_new = np.clip(f_new, a_min = 0, a_max = np.inf)
+
     return f_new
 
 def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=theta):
@@ -265,48 +300,37 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = np.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
-def bgk_step(f, molecular_weight, phi, nB):
+def bgk_step(f, molecular_weight, phi, nB, stream_fn):
 
     #################### Before streaming ####################
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
-
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
 
     CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
-
     lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
 
     ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
-
     feq = equilibrium(f, rho_s, phi, ux_star_s, uy_star_s)
-
-    print(feq.shape)
 
     g_dagger_s =calculate_g_dagger(f, feq, lambda_s)
 
-    print(g_dagger_s.shape)
-
     #################### After streaming ####################
 
-    f_streamed = lattice_stream(f)
+    f_streamed = stream_fn(f)
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f_streamed, phi)
-
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
 
     lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
-
     CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
 
     Chi_S = post_stream_Chi_S(CHI_sc, rho_s, rho_mix)
-
     ux_dagger, uy_dagger, jx_s, jy_s = solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=theta)
 
     ux_star_dagger_s, uy_star_dagger_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_dagger, uy_dagger)
 
     feq_dagger = equilibrium(f_streamed, rho_s, phi, ux_star_dagger_s, uy_star_dagger_s)
-
     f_new = distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s)
 
     return f_new
