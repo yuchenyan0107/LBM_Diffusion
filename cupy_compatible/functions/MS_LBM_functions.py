@@ -55,6 +55,8 @@ def lattice_stream_BC_full(g_dagger_s, phi, step):
     b1 = xp.array([100, 0, 0])
     b2 = xp.array([1, 1, 1])
     b3 = xp.array([0, 1.8, 39.6])
+
+    reflection_boundary = xp.array([0, 1, 1])
     '''
     b1 = xp.array([0, 0, 0])
     b2 = xp.array([1, 1, 1])
@@ -65,21 +67,36 @@ def lattice_stream_BC_full(g_dagger_s, phi, step):
 
     for s in range(g_dagger_s.shape[0]):
 
-        if b1[s] == 0:
-            C_w_bottom = xp.ones(g_dagger_s.shape[2]) * b3[s]/b2[s]
+        if reflection_boundary[s] == 0: # if boundary is not reflection:
 
-        else:
-            C_f_bottom = xp.sum(g_dagger_s[s, :, :, 0], axis=0)  # last component, bottom row
+            if b1[s] == 0: # two different types of concentration
+                C_w_bottom = xp.ones(g_dagger_s.shape[2]) * b3[s]/b2[s]
 
-            C_w_bottom = (C_f_bottom + ne* dx * b3[s] / b1[s] /2) / (1 + ne * dx * b2[s] /b1[s] /2)
+            else:
+                C_f_bottom = xp.sum(g_dagger_s[s, :, :, 0], axis=0)  # last component, bottom row
 
-        f_w_bottom = eq_single_boundary(C_w_bottom, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
+                C_w_bottom = (C_f_bottom + ne* dx * b3[s] / b1[s] /2) / (1 + ne * dx * b2[s] /b1[s] /2)
 
-        if s == 0:
+            # equilibrium based on concentration
+            f_w_bottom = eq_single_boundary(C_w_bottom, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
 
             g_streamed[s, 1, :, 0] = -g_dagger_s[s, 5, :, 0] + 2 * f_w_bottom[1]
             g_streamed[s, 2, :, 0] = -g_dagger_s[s, 6, :, 0] + 2 * f_w_bottom[2]
             g_streamed[s, 8, :, 0] = -g_dagger_s[s, 4, :, 0] + 2 * f_w_bottom[8]
+
+            if b1[s] != 0: # for absorption condition, overwrite masked area
+                nx, a = g_dagger_s.shape[2], g_dagger_s.shape[2]//5
+                non_absorbing = 1-(np.arange(nx) // a) % 2
+
+                g_streamed[s, 1, (non_absorbing == 1), 0] = g_dagger_s[s, 5, (non_absorbing == 1), 0]
+                g_streamed[s, 2, (non_absorbing == 1), 0] = g_dagger_s[s, 6, (non_absorbing == 1), 0]
+                g_streamed[s, 8, (non_absorbing == 1), 0] = g_dagger_s[s, 4, (non_absorbing == 1), 0]
+
+        else: # no-slip wall:
+
+            g_streamed[s, 1, :, 0] = g_dagger_s[s, 5, :, 0]
+            g_streamed[s, 2, :, 0] = g_dagger_s[s, 6, :, 0]
+            g_streamed[s, 8, :, 0] = g_dagger_s[s, 4, :, 0]
 
 
     # top:
@@ -88,11 +105,11 @@ def lattice_stream_BC_full(g_dagger_s, phi, step):
     b3 = xp.array([42, 1.8, 39.6])
 
     for s in range(g_dagger_s.shape[0]):
+
         C_w_top = xp.ones(g_dagger_s.shape[2]) * b3[s] / b2[s]
         f_w_bottom = eq_single_boundary(C_w_top, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
 
         if s ==0:
-
             g_streamed[s, 5, :, -1] = -g_dagger_s[s, 1, :, -1] + 2 * f_w_bottom[5]
             g_streamed[s, 6, :, -1] = -g_dagger_s[s, 2, :, -1] + 2 * f_w_bottom[6]
             g_streamed[s, 4, :, -1] = -g_dagger_s[s, 8, :, -1] + 2 * f_w_bottom[4]
@@ -116,7 +133,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step):
 
         ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
 
-        plot_vector(cp.asnumpy(ux_star_s[2, :, :]), cp.asnumpy(uy_star_s[2, :, :]), zoom = 2)
+        plot_vector(cp.asnumpy(ux_star_s[0, :, :]), cp.asnumpy(uy_star_s[0, :, :]), zoom = 2)
         #plt.plot(cp.asnumpy(ux_star_s[0, :, :])[:, 200])
 
     return g_streamed
