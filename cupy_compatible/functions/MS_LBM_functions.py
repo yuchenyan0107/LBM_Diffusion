@@ -44,7 +44,7 @@ def lattice_stream(f):
 
     return f_streamed
 
-def lattice_stream_BC_full(g_dagger_s, phi, step):
+def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
 
     g_streamed = xp.zeros_like(g_dagger_s)
     for i in range(w.shape[0]):
@@ -52,7 +52,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step):
 
     #bottom absorption:
 
-    b1 = xp.array([100, 0, 0])
+    b1 = xp.array([absorption_coefficient, 0, 0])
     b2 = xp.array([1, 1, 1])
     b3 = xp.array([0, 1.8, 39.6])
 
@@ -133,7 +133,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step):
 
         ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
 
-        plot_vector(cp.asnumpy(ux_star_s[0, :, :]), cp.asnumpy(uy_star_s[0, :, :]), zoom = 2)
+        #plot_vector(cp.asnumpy(ux_star_s[0, :, :]), cp.asnumpy(uy_star_s[0, :, :]), zoom = 2)
         #plt.plot(cp.asnumpy(ux_star_s[0, :, :])[:, 200])
 
     return g_streamed
@@ -442,7 +442,7 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = xp.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
-def bgk_step(f, molecular_weight, phi, nB, stream_fn, step):
+def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficient):
 
     #################### Before streaming ####################
 
@@ -463,7 +463,7 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step):
 
     #################### After streaming ####################
 
-    g_streamed = lattice_stream_BC_full(g_dagger_s, phi, step)
+    g_streamed = lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient)
     #g_streamed = lattice_stream(g_dagger_s)
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
