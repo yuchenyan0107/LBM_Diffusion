@@ -15,6 +15,11 @@ else:
     cp = None
     xp = np
 
+def to_numpy(arr):
+    if cp is not None and hasattr(cp, "asnumpy") and isinstance(arr, cp.ndarray):
+        return cp.asnumpy(arr)
+    return np.asarray(arr)
+
 
 D2Q9_CX = xp.array([0, 0, 1, 1, 1, 0, -1, -1, -1], dtype=xp.int64) # CW: up, ur, r, dr, d.....
 D2Q9_CY = xp.array([0, 1, 1, 0, -1, -1, -1, 0, 1], dtype=xp.int64)
@@ -52,76 +57,22 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
 
     #bottom absorption:
 
-    b1 = xp.array([absorption_coefficient, 0, 0])
+    b1 = xp.array([absorption_coefficient, 0, 0]) # 1 / absorption
     b2 = xp.array([1, 1, 1])
-    b3 = xp.array([0, 1.8, 39.6])
+    b3 = xp.array([0, 1.8, 39.6]) # stable concentration
+    reflection_boundary = np.array([0, 1, 1]) # which component has no-slip wall BC
 
-    reflection_boundary = xp.array([0, 1, 1])
-    '''
-    b1 = xp.array([0, 0, 0])
-    b2 = xp.array([1, 1, 1])
-    b3 = xp.array([42, 1.8, 39.6]) * 1.1
-    '''
-    dx = 1
-    ne = 1
-
-    for s in range(g_dagger_s.shape[0]):
-
-        if reflection_boundary[s] == 0: # if boundary is not reflection:
-
-            if b1[s] == 0: # two different types of concentration
-                C_w_bottom = xp.ones(g_dagger_s.shape[2]) * b3[s]/b2[s]
-
-            else:
-                C_f_bottom = xp.sum(g_dagger_s[s, :, :, 0], axis=0)  # last component, bottom row
-
-                C_w_bottom = (C_f_bottom + ne* dx * b3[s] / b1[s] /2) / (1 + ne * dx * b2[s] /b1[s] /2)
-
-            # equilibrium based on concentration
-            f_w_bottom = eq_single_boundary(C_w_bottom, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
-
-            g_streamed[s, 1, :, 0] = -g_dagger_s[s, 5, :, 0] + 2 * f_w_bottom[1]
-            g_streamed[s, 2, :, 0] = -g_dagger_s[s, 6, :, 0] + 2 * f_w_bottom[2]
-            g_streamed[s, 8, :, 0] = -g_dagger_s[s, 4, :, 0] + 2 * f_w_bottom[8]
-
-            if b1[s] != 0: # for absorption condition, overwrite masked area
-                nx, a = g_dagger_s.shape[2], g_dagger_s.shape[2]//5
-                non_absorbing = 1-(np.arange(nx) // a) % 2
-
-                g_streamed[s, 1, (non_absorbing == 1), 0] = g_dagger_s[s, 5, (non_absorbing == 1), 0]
-                g_streamed[s, 2, (non_absorbing == 1), 0] = g_dagger_s[s, 6, (non_absorbing == 1), 0]
-                g_streamed[s, 8, (non_absorbing == 1), 0] = g_dagger_s[s, 4, (non_absorbing == 1), 0]
-
-        else: # no-slip wall:
-
-            g_streamed[s, 1, :, 0] = g_dagger_s[s, 5, :, 0]
-            g_streamed[s, 2, :, 0] = g_dagger_s[s, 6, :, 0]
-            g_streamed[s, 8, :, 0] = g_dagger_s[s, 4, :, 0]
-
+    g_streamed = boundary('bottom', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary)
 
     # top:
 
+    b1 = xp.array([0, 0, 0])
     b2 = xp.array([1, 1, 1])
     b3 = xp.array([42, 1.8, 39.6])
+    reflection_boundary = np.array([0, 0, 0])
 
-    for s in range(g_dagger_s.shape[0]):
+    g_streamed = boundary('top', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary)
 
-        C_w_top = xp.ones(g_dagger_s.shape[2]) * b3[s] / b2[s]
-        f_w_bottom = eq_single_boundary(C_w_top, phi[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
-
-        if s ==0:
-            g_streamed[s, 5, :, -1] = -g_dagger_s[s, 1, :, -1] + 2 * f_w_bottom[5]
-            g_streamed[s, 6, :, -1] = -g_dagger_s[s, 2, :, -1] + 2 * f_w_bottom[6]
-            g_streamed[s, 4, :, -1] = -g_dagger_s[s, 8, :, -1] + 2 * f_w_bottom[4]
-        '''
-        if s == 0:
-
-            print(xp.mean(C_w_top))
-            print(np.mean(xp.sum(g_dagger_s[s, :, :, 0], axis=0)))
-            print(xp.mean(g_dagger_s[s, 1, :, -1]))
-            print(xp.mean(xp.sum(f_w_bottom, axis = 0)))
-            print("####################")
-        '''
 
     if step % 200 == 0:
         molecular_weight = xp.array([28.0, 2.0, 44.0])
@@ -138,6 +89,51 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
 
     return g_streamed
 
+def boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary):
+
+    if direction == 'top':
+        boundary_indexes = xp.array([4,5,6])
+        row_index = -1
+    elif direction == 'bottom':
+        boundary_indexes = xp.array([1,2,8])
+        row_index = 0
+
+    dx = 1
+    ne = 1
+
+    for s in range(g_dagger_s.shape[0]):
+
+        if reflection_boundary[s] == 0:  # if boundary is not reflection:
+
+            if b1[s] == 0:  # Dirichlet boundary
+                C_w = xp.ones(g_dagger_s.shape[2]) * b3[s] / b2[s]
+
+            else: # absorption
+                C_f = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)  # last component, bottom row
+
+                C_w = (C_f + ne * dx * b3[s] / b1[s] / 2) / (1 + ne * dx * b2[s] / b1[s] / 2)
+
+            # equilibrium based on concentration
+            f_w_bottom = eq_single_boundary(C_w, phi[s], xp.zeros(g_dagger_s.shape[2]),
+                                            xp.zeros(g_dagger_s.shape[2]))
+
+            for i in boundary_indexes:
+                g_streamed[s, i, :, row_index] = -g_dagger_s[s, OPPOSITE[i], :, row_index] + 2 * f_w_bottom[i]
+
+            if b1[s] != 0:  # for absorption condition, overwrite masked area to no-slip wall
+                nx, a = g_dagger_s.shape[2], g_dagger_s.shape[2] // 5
+                non_absorbing = 1 - (xp.arange(nx) // a) % 2
+
+                for i in boundary_indexes:
+                    g_streamed[s, i, (non_absorbing == 1), row_index] = g_dagger_s[s, OPPOSITE[i], (non_absorbing == 1), row_index]
+
+
+        else:  # no-slip wall:
+
+            for i in boundary_indexes:
+                g_streamed[s, i, :, row_index] = g_dagger_s[s, OPPOSITE[i], :, row_index]
+
+    return g_streamed
 
 
 def plot_vector(ux, uy, skip=10, scale=1, cmap='viridis', show_bg=False, dx=1.0, dy=1.0, zoom = None):
