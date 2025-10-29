@@ -49,7 +49,7 @@ def lattice_stream(f, phi, step, absorption_coefficient):
 
     return f_streamed
 
-def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
+def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient, non_absorb_mask):
 
     g_streamed = xp.zeros_like(g_dagger_s)
     for i in range(w.shape[0]):
@@ -62,7 +62,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
     b3 = xp.array([0, 1.8, 39.6]) # stable concentration
     reflection_boundary = np.array([0, 1, 1]) # which component has no-slip wall BC
 
-    g_streamed = boundary('bottom', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary)
+    g_streamed = top_bottom_boundary('bottom', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
 
     # top:
 
@@ -71,7 +71,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
     b3 = xp.array([42, 1.8, 39.6])
     reflection_boundary = np.array([0, 0, 0])
 
-    g_streamed = boundary('top', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary)
+    g_streamed = top_bottom_boundary('top', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
 
 
     if step % 200 == 0:
@@ -89,7 +89,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient):
 
     return g_streamed
 
-def boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary):
+def top_bottom_boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask):
 
     if direction == 'top':
         boundary_indexes = xp.array([4,5,6])
@@ -121,11 +121,11 @@ def boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boun
                 g_streamed[s, i, :, row_index] = -g_dagger_s[s, OPPOSITE[i], :, row_index] + 2 * f_w_bottom[i]
 
             if b1[s] != 0:  # for absorption condition, overwrite masked area to no-slip wall
-                nx, a = g_dagger_s.shape[2], g_dagger_s.shape[2] // 5
-                non_absorbing = 1 - (xp.arange(nx) // a) % 2
+                #nx, a = g_dagger_s.shape[2], g_dagger_s.shape[2] // 5
+                #non_absorbing = (xp.arange(nx) // a) % 2
 
                 for i in boundary_indexes:
-                    g_streamed[s, i, (non_absorbing == 1), row_index] = g_dagger_s[s, OPPOSITE[i], (non_absorbing == 1), row_index]
+                    g_streamed[s, i, (non_absorb_mask == 1), row_index] = g_dagger_s[s, OPPOSITE[i], (non_absorb_mask == 1), row_index]
 
         else:  # no-slip wall:
             for i in boundary_indexes:
@@ -436,7 +436,7 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = xp.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
-def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficient):
+def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficient, non_absorb_mask):
 
     #################### Before streaming ####################
 
@@ -452,7 +452,7 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficie
 
     #################### After streaming ####################
 
-    g_streamed = stream_fn(g_dagger_s, phi, step, absorption_coefficient)
+    g_streamed = stream_fn(g_dagger_s, phi, step, absorption_coefficient, non_absorb_mask)
     #g_streamed = lattice_stream(g_dagger_s)
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
