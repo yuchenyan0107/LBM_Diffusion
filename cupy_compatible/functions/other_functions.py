@@ -11,7 +11,7 @@ def save_concentration_frames(f: np.ndarray, phi: np.ndarray, frame_idx: int, mo
     cmaps = ["Blues", "Greens", "Reds"]
 
     fig, axes = plt.subplots(3, 1, figsize=(6, 9), sharex=True, sharey=True)
-    for s in range(3):
+    for s in range(f.shape[0]):
         #im = axes[s].imshow((conc_cpu[s].T)/mw_cpu[s], origin="lower", cmap=cmaps[s], aspect="auto")
         im = axes[s].imshow((conc_cpu[s].T), origin="lower", cmap=cmaps[s], aspect="auto")
         axes[s].set_title(f"{labels[s]} concentration")

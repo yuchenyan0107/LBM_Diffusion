@@ -41,7 +41,7 @@ def _safe_divide(numerator, denominator, mask=None):
     return xp.where(mask, result, xp.zeros_like(result))
 
 
-def lattice_stream(f):
+def lattice_stream(f, phi, step, absorption_coefficient):
 
     f_streamed = xp.zeros_like(f)
     for i in range(w.shape[0]): # for each species
@@ -127,9 +127,7 @@ def boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boun
                 for i in boundary_indexes:
                     g_streamed[s, i, (non_absorbing == 1), row_index] = g_dagger_s[s, OPPOSITE[i], (non_absorbing == 1), row_index]
 
-
         else:  # no-slip wall:
-
             for i in boundary_indexes:
                 g_streamed[s, i, :, row_index] = g_dagger_s[s, OPPOSITE[i], :, row_index]
 
@@ -443,11 +441,6 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficie
     #################### Before streaming ####################
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
-    '''
-    if step%50==0:
-        plt.plot(cp.asnumpy(rho_s)[0, :, 200])
-        plt.show()
-    '''
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
     CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
     lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
@@ -459,7 +452,7 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficie
 
     #################### After streaming ####################
 
-    g_streamed = lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient)
+    g_streamed = stream_fn(g_dagger_s, phi, step, absorption_coefficient)
     #g_streamed = lattice_stream(g_dagger_s)
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
