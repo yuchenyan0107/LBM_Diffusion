@@ -41,7 +41,7 @@ def _safe_divide(numerator, denominator, mask=None):
     return xp.where(mask, result, xp.zeros_like(result))
 
 
-def lattice_stream(f, phi, step, absorption_coefficient):
+def lattice_stream(f, phi, step, non_absorb_mask, bc_top, bc_bottom):
 
     f_streamed = xp.zeros_like(f)
     for i in range(w.shape[0]): # for each species
@@ -49,27 +49,19 @@ def lattice_stream(f, phi, step, absorption_coefficient):
 
     return f_streamed
 
-def lattice_stream_BC_full(g_dagger_s, phi, step, absorption_coefficient, non_absorb_mask):
+def lattice_stream_BC_full(g_dagger_s, phi, step, non_absorb_mask, bc_top, bc_bottom):
 
     g_streamed = xp.zeros_like(g_dagger_s)
     for i in range(w.shape[0]):
         g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
 
     #bottom absorption:
-
-    b1 = xp.array([absorption_coefficient, 0, 0]) # 1 / absorption
-    b2 = xp.array([1, 1, 1])
-    b3 = xp.array([0, 1.8, 39.6]) # stable concentration
-    reflection_boundary = np.array([0, 1, 1]) # which component has no-slip wall BC
+    b1, b2, b3, reflection_boundary = bc_bottom
 
     g_streamed = top_bottom_boundary('bottom', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
 
     # top:
-
-    b1 = xp.array([0, 0, 0])
-    b2 = xp.array([1, 1, 1])
-    b3 = xp.array([42, 1.8, 39.6])
-    reflection_boundary = np.array([0, 0, 0])
+    b1, b2, b3, reflection_boundary = bc_top
 
     g_streamed = top_bottom_boundary('top', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
 
@@ -436,7 +428,7 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = xp.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
-def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficient, non_absorb_mask):
+def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, non_absorb_mask, bc_top, bc_bottom):
 
     #################### Before streaming ####################
 
@@ -452,8 +444,8 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, absorption_coefficie
 
     #################### After streaming ####################
 
-    g_streamed = stream_fn(g_dagger_s, phi, step, absorption_coefficient, non_absorb_mask)
-    #g_streamed = lattice_stream(g_dagger_s)
+    g_streamed = stream_fn(g_dagger_s, phi, step,
+                           non_absorb_mask, bc_top, bc_bottom)
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
