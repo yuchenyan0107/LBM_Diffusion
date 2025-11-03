@@ -65,7 +65,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, non_absorb_mask, bc_top, bc_bo
 
     g_streamed = top_bottom_boundary('top', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
 
-
+    '''
     if step % 200 == 0:
         molecular_weight = xp.array([28.0, 2.0, 44.0])
         nB = 2
@@ -78,7 +78,7 @@ def lattice_stream_BC_full(g_dagger_s, phi, step, non_absorb_mask, bc_top, bc_bo
 
         #plot_vector(cp.asnumpy(ux_star_s[0, :, :]), cp.asnumpy(uy_star_s[0, :, :]), zoom = 2)
         #plt.plot(cp.asnumpy(ux_star_s[0, :, :])[:, 200])
-
+    '''
     return g_streamed
 
 def top_bottom_boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask):
