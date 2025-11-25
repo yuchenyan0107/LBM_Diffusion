@@ -126,61 +126,6 @@ def top_bottom_boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, refl
     return g_streamed
 
 
-def plot_vector(ux, uy, skip=10, scale=1, cmap='viridis', show_bg=False, dx=1.0, dy=1.0, zoom = None):
-    """
-    Plot a 2D vector field where ux, uy have shape (nx, ny) = (x, y).
-    - x increases left→right, y increases bottom→top.
-    - Arrows colored by speed |u|.
-    """
-    ux = np.asarray(ux)
-    uy = np.asarray(uy)
-    if ux.shape != uy.shape or ux.ndim != 2:
-        raise ValueError("ux and uy must be 2D arrays with the same shape (nx, ny).")
-
-    nx, ny = ux.shape
-    x = np.arange(nx) * dx
-    y = np.arange(ny) * dy
-
-    # Build grid in standard plotting orientation (rows = y, cols = x)
-    X, Y = np.meshgrid(x, y, indexing='xy')      # shapes (ny, nx)
-
-    # Transpose velocity components to match (ny, nx)
-    U = ux.T                                     # (ny, nx)
-    V = uy.T                                     # (ny, nx)
-
-    # Thinning
-    s = max(1, int(skip))
-    Xs, Ys = X[::s, ::s], Y[::s, ::s]
-    Us, Vs = U[::s, ::s] * zoom, V[::s, ::s] * zoom
-    speed = np.hypot(Us, Vs)
-
-    fig, ax = plt.subplots(figsize=(7, 5), dpi=150)
-
-    if show_bg:
-        bg = np.hypot(ux, uy).T                  # (ny, nx)
-        ax.imshow(
-            bg, origin='lower',
-            extent=[x.min(), x.max(), y.min(), y.max()],
-            alpha=0.35, cmap=cmap
-        )
-
-    q = ax.quiver(
-        Xs, Ys, Us, Vs, speed,
-        angles='xy', scale_units='width', scale=scale,
-        width=0.003, headwidth=3, headlength=4, cmap=cmap
-    )
-
-    ax.set_aspect('equal')
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_title('Velocity field (color = |u|)')
-    fig.colorbar(q, ax=ax, label='speed')
-
-    plt.tight_layout()
-    plt.show()
-    return fig, ax
-
-
 def eq_single_boundary(C_w, phi_s, ux_star, uy_star):
     u_sq = ux_star ** 2 + uy_star ** 2  # (nx or...y...)
     cu = D2Q9_CX[:, None] * ux_star[None, :] + D2Q9_CY[:, None] * uy_star[None, :]
