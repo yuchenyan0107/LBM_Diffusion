@@ -1,31 +1,11 @@
-import numpy as np
-import matplotlib.pyplot as plt
-use_cupy = True
-
-if use_cupy:
-
-    try:
-        import cupy as cp
-        xp = cp
-        print("Using cupy")
-    except ImportError:
-        cp = None
-        xp = np
-else:
-    cp = None
-    xp = np
-
-def to_numpy(arr):
-    if cp is not None and hasattr(cp, "asnumpy") and isinstance(arr, cp.ndarray):
-        return cp.asnumpy(arr)
-    return np.asarray(arr)
+from .use_cupy import *
 
 
-D2Q9_CX = xp.array([0, 0, 1, 1, 1, 0, -1, -1, -1], dtype=xp.int64) # CW: up, ur, r, dr, d.....
-D2Q9_CY = xp.array([0, 1, 1, 0, -1, -1, -1, 0, 1], dtype=xp.int64)
+D2Q9_CX = xp.array([0, 0, 1, 1, 1, 0, -1, -1, -1], dtype=xp.float32) # CW: up, ur, r, dr, d.....
+D2Q9_CY = xp.array([0, 1, 1, 0, -1, -1, -1, 0, 1], dtype=xp.float32)
 
-w = xp.array([4/9, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36])
-OPPOSITE = xp.array([0,5,6,7,8,1,2,3,4], dtype=xp.int64)
+w = xp.array([4/9, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36], dtype=xp.float32)
+OPPOSITE = xp.array([0,5,6,7,8,1,2,3,4], dtype=xp.float32)
 theta = 0.5
 
 
@@ -40,116 +20,14 @@ def _safe_divide(numerator, denominator, mask=None):
     result = numerator / denom_safe
     return xp.where(mask, result, xp.zeros_like(result))
 
-
-def lattice_stream(f, phi, step, non_absorb_mask, bc_top, bc_bottom):
-
-    f_streamed = xp.zeros_like(f)
-    for i in range(w.shape[0]): # for each species
-        f_streamed[:, i, :, :] = xp.roll(f[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
-
-    return f_streamed
-
-def lattice_stream_BC_full(g_dagger_s, phi, step, non_absorb_mask, bc_top, bc_bottom):
-
-    g_streamed = xp.zeros_like(g_dagger_s)
-    for i in range(w.shape[0]):
-        g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
-
-    #bottom absorption:
-    b1, b2, b3, reflection_boundary = bc_bottom
-
-    g_streamed = top_bottom_boundary('bottom', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
-
-    # top:
-    b1, b2, b3, reflection_boundary = bc_top
-
-    g_streamed = top_bottom_boundary('top', g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask)
-
-    '''
-    if step % 200 == 0:
-        molecular_weight = xp.array([28.0, 2.0, 44.0])
-        nB = 2
-        rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
-        m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
-
-        CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
-
-        ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
-
-        #plot_vector(cp.asnumpy(ux_star_s[0, :, :]), cp.asnumpy(uy_star_s[0, :, :]), zoom = 2)
-        #plt.plot(cp.asnumpy(ux_star_s[0, :, :])[:, 200])
-    '''
-    return g_streamed
-
-def top_bottom_boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, reflection_boundary, non_absorb_mask):
-
-    if direction == 'top':
-        boundary_indexes = xp.array([4,5,6])
-        row_index = -1
-    elif direction == 'bottom':
-        boundary_indexes = xp.array([1,2,8])
-        row_index = 0
-
-    dx = 1
-    ne = 1
-
-    for s in range(g_dagger_s.shape[0]):
-
-        if reflection_boundary[s] == 0:  # if boundary is not reflection:
-
-            if b1[s] == 0:  # Dirichlet boundary
-                C_w = xp.ones(g_dagger_s.shape[2]) * b3[s] / b2[s]
-
-            else: # absorption
-                C_f = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)  # last component, bottom row
-
-                C_w = (C_f + ne * dx * b3[s] / b1[s] / 2) / (1 + ne * dx * b2[s] / b1[s] / 2)
-
-            # equilibrium based on concentration
-            f_w_bottom = eq_single_boundary(C_w, phi[s], xp.zeros(g_dagger_s.shape[2]),
-                                            xp.zeros(g_dagger_s.shape[2]))
-
-            for i in boundary_indexes:
-                g_streamed[s, i, :, row_index] = -g_dagger_s[s, OPPOSITE[i], :, row_index] + 2 * f_w_bottom[i]
-
-            if b1[s] != 0:  # for absorption condition, overwrite masked area to no-slip wall
-                #nx, a = g_dagger_s.shape[2], g_dagger_s.shape[2] // 5
-                #non_absorbing = (xp.arange(nx) // a) % 2
-
-                for i in boundary_indexes:
-                    g_streamed[s, i, (non_absorb_mask == 1), row_index] = g_dagger_s[s, OPPOSITE[i], (non_absorb_mask == 1), row_index]
-
-        else:  # no-slip wall:
-            for i in boundary_indexes:
-                g_streamed[s, i, :, row_index] = g_dagger_s[s, OPPOSITE[i], :, row_index]
-
-    return g_streamed
-
-
-def eq_single_boundary(C_w, phi_s, ux_star, uy_star):
-    u_sq = ux_star ** 2 + uy_star ** 2  # (nx or...y...)
-    cu = D2Q9_CX[:, None] * ux_star[None, :] + D2Q9_CY[:, None] * uy_star[None, :]
-
-    f_w_eq = w[:, None] * C_w[None, :] * (
-            phi_s
-            + 3 * cu
-            + 4.5 * cu ** 2
-            - 1.5 * u_sq
-    )
-
-    f_w_eq[0, :] = w[0] * C_w * ((9 - 5 * phi_s) / 4 - 1.5 * u_sq)
-
-    return f_w_eq
-
 def calculate_moment(f, phi):
 
-    rho_s = xp.sum(f, axis = 1)
-    ux_s = xp.sum(f * D2Q9_CX.reshape(1,9,1,1), axis = 1) / rho_s
-    uy_s = xp.sum(f * D2Q9_CY.reshape(1,9,1,1), axis = 1) / rho_s
+    rho_s = xp.sum(f, axis = 1, dtype = xp.float32)
+    ux_s = xp.sum(f * D2Q9_CX.reshape(1,9,1,1), axis = 1, dtype=xp.float32) / rho_s
+    uy_s = xp.sum(f * D2Q9_CY.reshape(1,9,1,1), axis = 1, dtype=xp.float32) / rho_s
 
-    rho_mix = xp.clip(xp.sum(rho_s, axis = 0), a_min = 0, a_max= xp.inf)
-    p_mix = xp.clip(xp.sum(rho_s * phi[:, None, None]/3, axis = 0), a_min = 0, a_max = xp.inf)
-
+    rho_mix = xp.clip(xp.sum(rho_s, axis = 0, dtype=xp.float32), a_min = 0, a_max= xp.inf)
+    p_mix = xp.clip(xp.sum(rho_s * phi[:, None, None]/3, axis = 0, dtype=xp.float32), a_min = 0, a_max = xp.inf)
 
     return rho_s, ux_s, uy_s, rho_mix, p_mix
 
@@ -205,7 +83,7 @@ def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
             13.830057843624722,
             16.631330580338215,
         ],
-        dtype=xp.float64,
+        dtype=xp.float32,
     )
     factor = table[nB - 1]
     return factor * 10.0 * (1.0 / m1 + 1.0 / m2) ** (-0.5)
@@ -214,7 +92,7 @@ def calculate_CHI(m_mix, molecular_weight, nB):
 
     N_species = len(molecular_weight)
     nx, ny = m_mix.shape
-    CHI_sc = xp.zeros((N_species, N_species, nx, ny))
+    CHI_sc = xp.zeros((N_species, N_species, nx, ny), dtype=xp.float32)
 
     for s in range(N_species):
         B_ss = B_binary_resistivity(molecular_weight[s], molecular_weight[s], nB)
@@ -229,7 +107,7 @@ def calculate_CHI(m_mix, molecular_weight, nB):
 def calculate_lambda(rho_mix, p_mix, molecular_weight, nB):
     N_species = len(molecular_weight)
     nx, ny = rho_mix.shape
-    lambda_s = xp.zeros((N_species, nx, ny))
+    lambda_s = xp.zeros((N_species, nx, ny), dtype=xp.float32)
 
     for s in range(N_species):
         B_ss = B_binary_resistivity(molecular_weight[s], molecular_weight[s], nB)
@@ -264,7 +142,7 @@ def calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s):
 def equilibrium(f, rho_s, phi, ux_star_s, uy_star_s):
 
     #N_species = len(phi)
-    feq = xp.zeros_like(f)
+    feq = xp.zeros_like(f, dtype=xp.float32)
 
     u_sq = ux_star_s ** 2 + uy_star_s ** 2 # (N_species, nx, ny)
     cu = D2Q9_CX[None, :, None, None] * ux_star_s[:, None, :, :] + D2Q9_CY[None, :, None, None] * uy_star_s[:, None, :, :]
@@ -289,7 +167,7 @@ def calculate_g_dagger(f, feq, lambda_s):
 
 
 def post_stream_Chi_S(CHI_sc, rho_s, rho_mix):
-    Chi_S = xp.zeros_like(rho_s)
+    Chi_S = xp.zeros_like(rho_s, dtype=xp.float32)
 
     for s in range(rho_s.shape[0]):
         Chi_S[s] = xp.sum(CHI_sc[s, :, :, :] * rho_s / rho_mix[None, :, :], axis=0)
@@ -301,6 +179,9 @@ def distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s):
         (g_dagger_s + theta * lambda_s[:, None, :, :] * feq_dagger)
         / ((1 + theta * lambda_s)[:, None, :, :])
     )
+
+    if xp.any(f_new < 0):
+        print("clipped")
 
     f_new = xp.clip(f_new, a_min = 0, a_max = xp.inf)
 
@@ -406,4 +287,113 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, non_absorb_mask, bc_
     feq_dagger = equilibrium(g_streamed, rho_s, phi, ux_star_dagger_s, uy_star_dagger_s)
     f_new = distribution_semi_implicit(feq_dagger, g_streamed, lambda_s)
 
+    #print(f_new.dtype)
+
+    #print("lambda ", xp.max(lambda_s), xp.min(lambda_s))
+
+    #print("vx ", xp.mean(ux_s, axis = (-2, -1)))
+    #print(xp.mean(uy_s, axis = (-2, -1)))
+
     return f_new
+
+'''
+def post_stream_Chi_S(CHI_sc, rho_s, rho_mix):
+    """
+    Compute Chi_S[s, x, y] = sum_c CHI_sc[s, c, x, y] * rho_c(x,y)/rho_mix(x,y)
+    (MSGas uses these sums in the diagonal entries of A.)
+    """
+    rho_mix_safe = xp.where(rho_mix > 0.0, rho_mix, 1.0)
+
+    # rho_ratio[c,x,y] = rho_c / rho_mix
+    rho_ratio = _safe_divide(
+        rho_s,
+        rho_mix_safe[None, :, :],
+        mask=(rho_mix[None, :, :] > 0.0),
+    )  # shape (N, nx, ny)
+
+    # Broadcast over the second species index of CHI_sc (c index)
+    rho_ratio_exp = rho_ratio[None, :, :, :]          # shape (1, N, nx, ny)
+
+    # Sum over c: Chi_S[s] = sum_c CHI_sc[s,c] * rho_c/rho_mix
+    Chi_S = xp.sum(CHI_sc * rho_ratio_exp, axis=1)    # -> (N, nx, ny)
+
+    # Zero out nodes with rho_mix == 0
+    Chi_S = xp.where(rho_mix[None, :, :] > 0.0, Chi_S, 0.0)
+
+    return Chi_S
+'''
+def bgk_step_alt(f, molecular_weight, phi, nB, stream_fn, step,
+             non_absorb_mask, bc_top, bc_bottom):
+    """
+    Single BGK+MS step in the same structure as MSGas:
+
+    1) Compute moments from pre-collision PDFs f.
+    2) Build Maxwell–Stefan coefficients (m_mix, CHI_sc, lambda_s, Chi_S).
+    3) Solve A * j = g for species momenta j (MS-corrected fluxes).
+    4) Convert to velocities u_sigma and build drift velocities u*_sigma.
+    5) Build equilibrium feq with u*_sigma.
+    6) Do one θ-scheme BGK update using lam_fac = lambda/(1 + theta*lambda).
+    7) Stream the post-collision PDFs with user-provided stream_fn.
+
+    This mirrors mus_compute_MSGas_module.fpp::bgk_advRel_d3q19f3_MSGas
+    up to:
+      - 2D instead of 3D
+      - generic N species instead of 3
+      - collide-then-stream instead of fused pull-stream+collide.
+    """
+
+    # ------------------ 1) Macroscopic fields from f ------------------ #
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
+
+    # ------------------ 2) MS coefficients (same as MSGas) ------------ #
+    m_mix   = calculate_m_mix(rho_s, rho_mix, molecular_weight)
+    CHI_sc  = calculate_CHI(m_mix, molecular_weight, nB)
+    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
+    # Avoid NaNs/Infs from empty nodes
+    lambda_s = xp.nan_to_num(lambda_s, nan=0.0, posinf=0.0, neginf=0.0)
+
+    Chi_S = post_stream_Chi_S(CHI_sc, rho_s, rho_mix)
+
+    # ------------------ 3) Solve MS flux LSE A * j = g ---------------- #
+    # This matches the MSGas matrix:
+    #   A_ss = 1 + θ λ_s Σ_{c≠s} χ_{s,c} (ρ_c/ρ)
+    #   A_sc = -θ λ_s (ρ_s/ρ) χ_{s,c}     (c ≠ s)
+    # with RHS gσ = ρσ uσ.
+    ux_ms, uy_ms, jx_s, jy_s = solve_ms_fluxes(
+        lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=theta
+    )
+
+    # ------------------ 4) Drift velocities u*_σ (uxstar, uystar) ----- #
+    # MSGas: uxstar(σ) = ux_ms(σ) + Σ_c χ_{σc} (ρ_c/ρ) [ux_ms(c)–ux_ms(σ)]
+    ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_ms, uy_ms)
+
+    # ------------------ 5) Equilibrium with MS-corrected u* ----------- #
+    feq = equilibrium(f, rho_s, phi, ux_star_s, uy_star_s)
+
+    # ------------------ 6) θ-scheme BGK update (lam_fac) --------------- #
+    # MSGas uses lam_fac = λ/(1+θλ), lamfac_o = 1 - lam_fac
+    lam_fac  = lambda_s / (1.0 + theta * lambda_s)
+    lamfac_o = 1.0 - lam_fac
+
+    # Broadcast over D2Q9 directions
+    lam_fac_b  = lam_fac[:, None, :, :]   # (Ns, 1, nx, ny)
+    lamfac_o_b = lamfac_o[:, None, :, :]
+
+    # f_post = (1 - lam_fac) f + lam_fac feq
+    f_post_collision = lamfac_o_b * f + lam_fac_b * feq
+    f_post_collision = xp.clip(f_post_collision, a_min=0.0, a_max=xp.inf)
+
+    # ------------------ 7) Streaming + BCs ---------------------------- #
+    # MSGas does a pull-stream inside the same kernel; here we do
+    # collide-then-stream, which is equivalent for this case.
+    f_streamed = stream_fn(
+        f_post_collision,
+        phi,
+        step,
+        non_absorb_mask,
+        bc_top,
+        bc_bottom,
+    )
+
+    return f_streamed
+

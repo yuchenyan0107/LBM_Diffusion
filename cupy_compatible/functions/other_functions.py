@@ -22,7 +22,7 @@ def save_concentration_frames(f: np.ndarray, phi: np.ndarray, frame_idx: int, mo
     fig.savefig(f"demo_frames_triple/frame_{frame_idx:04d}.png", dpi=160)
     plt.close(fig)
 
-def plot_vector(ux, uy, skip=10, scale=1, cmap='viridis', show_bg=False, dx=1.0, dy=1.0, zoom=None, shapes = None):
+def plot_vector(ux, uy, frame_idx, skip=10, scale=1, cmap='viridis', show_bg=False, dx=1.0, dy=1.0, zoom=None, shapes = None, save = True):
     """
     Plot a 2D vector field where ux, uy have shape (nx, ny) = (x, y).
     - x increases left→right, y increases bottom→top.
@@ -76,6 +76,10 @@ def plot_vector(ux, uy, skip=10, scale=1, cmap='viridis', show_bg=False, dx=1.0,
     fig.colorbar(q, ax=ax, label='speed')
 
     plt.tight_layout()
-    plt.show()
+    if save == True:
+        fig.savefig(f"demo_frames_triple/vector_{frame_idx:04d}.png", dpi=160)
+    else:
+        plt.show()
+    plt.close(fig)
     return fig, ax
 
