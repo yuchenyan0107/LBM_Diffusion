@@ -85,7 +85,7 @@ def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
         ],
         dtype=xp.float32,
     )
-    factor = table[nB - 1]
+    factor = table[nB]
     return factor * 10.0 * (1.0 / m1 + 1.0 / m2) ** (-0.5)
 
 def calculate_CHI(m_mix, molecular_weight, nB):

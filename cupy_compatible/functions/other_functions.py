@@ -66,7 +66,7 @@ def plot_vector(ux, uy, frame_idx, skip=10, scale=1, cmap='viridis', show_bg=Fal
         width=0.003, headwidth=3, headlength=4, cmap=cmap
     )
 
-    if object is not None:
+    if shapes is not None:
         ax.imshow((1 - shapes).T, cmap="gray", alpha=0.3)
 
     ax.set_aspect('equal')
