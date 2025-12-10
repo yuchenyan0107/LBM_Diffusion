@@ -1,7 +1,0 @@
-{
-  "title" : "filling JSON into pyratemp",
-  "special_chars" : "µ<ß€",
-  "number" : 13,
-  "mylist" : [ "JSON", "YAML", "manually-defined variables" ]
-}
-
