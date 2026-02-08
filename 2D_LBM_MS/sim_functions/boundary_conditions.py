@@ -2,7 +2,7 @@ from .common import *
 
 def lattice_stream(f, phi, step, non_absorb_mask, bc_top, bc_bottom, vx):
 
-    f_streamed = xp.zeros_like(f, dtype=xp.float32)
+    f_streamed = xp.zeros_like(f)
     for i in range(w.shape[0]): # for each species
         f_streamed[:, i, :, :] = xp.roll(f[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
 
@@ -10,7 +10,7 @@ def lattice_stream(f, phi, step, non_absorb_mask, bc_top, bc_bottom, vx):
 
 def lattice_stream_object_periodical(f, phi, step, non_absorb_mask, bc_top, bc_bottom, vx):
 
-    f_streamed = xp.zeros_like(f, dtype=xp.float32)
+    f_streamed = xp.zeros_like(f)
     for i in range(w.shape[0]): # for each species
         f_streamed[:, i, :, :] = xp.roll(f[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
 
@@ -32,7 +32,7 @@ def lattice_flow_object_inlet_outlet(f, phi, step, non_absorb_mask, bc_top, bc_b
     # inlet forced to be constant velocity at equilibrium
     # simple outlet condition (the last column equals the second to the last)
 
-    f_streamed = xp.zeros_like(f, dtype=xp.float32)
+    f_streamed = xp.zeros_like(f)
     for i in range(w.shape[0]): # for each species
         f_streamed[:, i, :, :] = xp.roll(f[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])),axis=(1, 2))
 
@@ -71,7 +71,7 @@ def lattice_flow_object_inlet_outlet(f, phi, step, non_absorb_mask, bc_top, bc_b
 
 def lattice_stream_BC_top_buttom(g_dagger_s, phi, step, non_absorb_mask, bc_top, bc_bottom, vx):
 
-    g_streamed = xp.zeros_like(g_dagger_s, dtype=xp.float32)
+    g_streamed = xp.zeros_like(g_dagger_s)
     for i in range(w.shape[0]):
         g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
 
@@ -104,10 +104,10 @@ def top_bottom_boundary(direction, g_streamed, g_dagger_s, phi, b1, b2, b3, refl
         if reflection_boundary[s] == 0:  # if boundary is not reflection:
 
             if b1[s] == 0:  # Dirichlet boundary
-                C_w = xp.ones(g_dagger_s.shape[2], dtype=xp.float32) * b3[s] / b2[s]
+                C_w = xp.ones(g_dagger_s.shape[2], dtype=DTYPE) * b3[s] / b2[s]
 
             else: # absorption
-                C_f = xp.sum(g_dagger_s[s, :, :, row_index], axis=0, dtype=xp.float32)  # last component, bottom row
+                C_f = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)  # last component, bottom row
 
                 C_w = (C_f + ne * dx * b3[s] / b1[s] / 2) / (1 + ne * dx * b2[s] / b1[s] / 2)
 
@@ -146,3 +146,5 @@ def eq_single_boundary(C_w, phi_s, ux_star, uy_star):
     f_w_eq[0, :] = w[0] * C_w * ((9 - 5 * phi_s) / 4 - 1.5 * u_sq)
 
     return f_w_eq
+
+

@@ -3,7 +3,7 @@ from .common import *
 def equilibrium(f, rho_s, phi, ux_star_s, uy_star_s):
 
     #N_species = len(phi)
-    feq = xp.zeros_like(f, dtype=xp.float32)
+    feq = xp.zeros_like(f)
 
     u_sq = ux_star_s ** 2 + uy_star_s ** 2 # (N_species, nx, ny)
     cu = D2Q9_CX[None, :, None, None] * ux_star_s[:, None, :, :] + D2Q9_CY[None, :, None, None] * uy_star_s[:, None, :, :]
@@ -17,39 +17,43 @@ def equilibrium(f, rho_s, phi, ux_star_s, uy_star_s):
 
     feq[:, 0, :, :] = w[0] * rho_s * ((9 - 5 * phi[:, None, None]) / 4 - 1.5 * u_sq)
 
+    if xp.any(feq < 0):
+        print("clipped_eq")
+    feq = xp.clip(feq, a_min=0, a_max=xp.inf)
+
     return feq
 
 def post_stream_Chi_S(CHI_sc, rho_s, rho_mix):
-    Chi_S = xp.zeros_like(rho_s, dtype=xp.float32)
+    Chi_S = xp.zeros_like(rho_s)
 
     for s in range(rho_s.shape[0]):
         Chi_S[s] = xp.sum(CHI_sc[s, :, :, :] * rho_s / rho_mix[None, :, :], axis=0)
 
     return Chi_S
 
-def calculate_CHI(m_mix, molecular_weight, nB):
+def calculate_CHI(m_mix, molecular_weight, multiplier):
 
     N_species = len(molecular_weight)
     nx, ny = m_mix.shape
-    CHI_sc = xp.zeros((N_species, N_species, nx, ny), dtype=xp.float32)
+    CHI_sc = xp.zeros((N_species, N_species, nx, ny), dtype=DTYPE)
 
     for s in range(N_species):
-        B_ss = B_binary_resistivity(molecular_weight[s], molecular_weight[s], nB)
+        B_ss = B_binary_resistivity(molecular_weight[s], molecular_weight[s], multiplier)
 
         for c in range(N_species):
-            B_sc = B_binary_resistivity(molecular_weight[s], molecular_weight[c], nB)
+            B_sc = B_binary_resistivity(molecular_weight[s], molecular_weight[c], multiplier)
 
             CHI_sc[s, c, :, :] = m_mix **2 * B_sc / (molecular_weight[s] * molecular_weight[c] * B_ss)
 
     return CHI_sc
 
-def calculate_lambda(rho_mix, p_mix, molecular_weight, nB):
+def calculate_lambda(rho_mix, p_mix, molecular_weight, multiplier):
     N_species = len(molecular_weight)
     nx, ny = rho_mix.shape
-    lambda_s = xp.zeros((N_species, nx, ny), dtype=xp.float32)
+    lambda_s = xp.zeros((N_species, nx, ny), dtype=DTYPE)
 
     for s in range(N_species):
-        B_ss = B_binary_resistivity(molecular_weight[s], molecular_weight[s], nB)
+        B_ss = B_binary_resistivity(molecular_weight[s], molecular_weight[s], multiplier)
         lambda_s[s, :, :] = p_mix * B_ss / rho_mix
 
     return lambda_s
@@ -121,47 +125,5 @@ def solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=t
     uy_updated = xp.nan_to_num(uy_updated)
     return ux_updated, uy_updated, jx_species, jy_species
 
-def B_binary_resistivity(m1: float, m2: float, nB: int) -> float:
-    """
-    This list is copied from the musubi example
-    Maxwell–Stefan binary resistivity lookup B(σ, ν).
-
-    Parameters
-    ----------
-    m1, m2:
-        Molecular weights of the interacting species.
-    nB:
-        Index (1-based) into the empirical resistivity table.
-
-    Returns
-    -------
-    float:
-        Resistivity value consistent with MIXLBM.f90::B.
-    """
-    table = xp.array(
-        [
-            0.500000000000000,
-            0.601274801898418,
-            0.723062774795962,
-            0.869518853351124,
-            1.045639552591273,
-            1.257433429682934,
-            1.512126072666108,
-            1.818406609575491,
-            2.186724147886553,
-            2.629644257653945,
-            3.162277660168372,
-            3.802795747331057,
-            4.573050519273251,
-            5.499320090094956,
-            6.613205195495662,
-            7.952707287670479,
-            9.563524997900334,
-            11.500613197126169,
-            13.830057843624722,
-            16.631330580338215,
-        ],
-        dtype=xp.float32,
-    )
-    factor = table[nB]
-    return factor * 10.0 * (1.0 / m1 + 1.0 / m2) ** (-0.5)
+def B_binary_resistivity(m1: float, m2: float, multiplier) -> float:
+    return multiplier * (1.0 / m1 + 1.0 / m2) ** (-0.5)

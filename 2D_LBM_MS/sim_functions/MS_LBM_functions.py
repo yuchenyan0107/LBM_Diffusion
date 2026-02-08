@@ -4,12 +4,12 @@ from .eq_and_ms import *
 
 def calculate_moment(f, phi):
 
-    rho_s = xp.sum(f, axis = 1, dtype = xp.float32)
-    ux_s = xp.sum(f * D2Q9_CX.reshape(1,9,1,1), axis = 1, dtype=xp.float32) / rho_s
-    uy_s = xp.sum(f * D2Q9_CY.reshape(1,9,1,1), axis = 1, dtype=xp.float32) / rho_s
+    rho_s = xp.sum(f, axis = 1)
+    ux_s = xp.sum(f * D2Q9_CX.reshape(1,9,1,1), axis = 1) / rho_s
+    uy_s = xp.sum(f * D2Q9_CY.reshape(1,9,1,1), axis = 1) / rho_s
 
-    rho_mix = xp.clip(xp.sum(rho_s, axis = 0, dtype=xp.float32), a_min = 0, a_max= xp.inf)
-    p_mix = xp.clip(xp.sum(rho_s * phi[:, None, None]/3, axis = 0, dtype=xp.float32), a_min = 0, a_max = xp.inf)
+    rho_mix = xp.clip(xp.sum(rho_s, axis = 0), a_min = 0, a_max= xp.inf)
+    p_mix = xp.clip(xp.sum(rho_s * phi[:, None, None]/3, axis = 0), a_min = 0, a_max = xp.inf)
 
     return rho_s, ux_s, uy_s, rho_mix, p_mix
 
@@ -65,20 +65,20 @@ def distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s):
     )
 
     if xp.any(f_new < 0):
-        print("clipped")
+        print("clipped_mix")
 
     f_new = xp.clip(f_new, a_min = 0, a_max = xp.inf)
 
     return f_new
 
-def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, non_absorb_mask, bc_top, bc_bottom, inlet_vx = 0):
+def bgk_step(f, molecular_weight, phi, multiplier, stream_fn, step, non_absorb_mask, bc_top, bc_bottom, inlet_vx = 0):
 
     #################### Before streaming ####################
 
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
-    CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
-    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
+    CHI_sc = calculate_CHI(m_mix, molecular_weight, multiplier)
+    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, multiplier)
 
     ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
     feq = equilibrium(f, rho_s, phi, ux_star_s, uy_star_s)
@@ -93,8 +93,8 @@ def bgk_step(f, molecular_weight, phi, nB, stream_fn, step, non_absorb_mask, bc_
     rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
     m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
 
-    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, nB)
-    CHI_sc = calculate_CHI(m_mix, molecular_weight, nB)
+    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, multiplier)
+    CHI_sc = calculate_CHI(m_mix, molecular_weight, multiplier)
 
     Chi_S = post_stream_Chi_S(CHI_sc, rho_s, rho_mix)
     ux_dagger, uy_dagger, jx_s, jy_s = solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=theta)
