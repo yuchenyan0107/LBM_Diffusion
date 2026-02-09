@@ -24,7 +24,7 @@ D2Q9_CX = xp.array([0, 0, 1, 1, 1, 0, -1, -1, -1], dtype=xp.float32) # CW: up, u
 D2Q9_CY = xp.array([0, 1, 1, 0, -1, -1, -1, 0, 1], dtype=xp.float32)
 
 w = xp.array([4/9, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36, 1/9, 1/36], dtype=xp.float32)
-OPPOSITE = xp.array([0,5,6,7,8,1,2,3,4], dtype=xp.float32)
+OPPOSITE = xp.array([0,5,6,7,8,1,2,3,4], dtype=xp.int32)
 theta = 0.5
 
 def safe_divide(numerator, denominator, mask=None):

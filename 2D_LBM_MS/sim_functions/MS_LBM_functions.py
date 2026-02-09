@@ -2,20 +2,20 @@ from .common import *
 from .eq_and_ms import *
 
 
-def calculate_moment(f, phi):
+def calculate_moment(f, lbm_config):
 
-    rho_s = xp.sum(f, axis = 1)
-    ux_s = xp.sum(f * D2Q9_CX.reshape(1,9,1,1), axis = 1) / rho_s
-    uy_s = xp.sum(f * D2Q9_CY.reshape(1,9,1,1), axis = 1) / rho_s
+    rho_s = xp.sum(f, axis = 1, dtype = DTYPE)
+    ux_s = xp.sum(f * D2Q9_CX.reshape(1,9,1,1), axis = 1, dtype = DTYPE) / rho_s
+    uy_s = xp.sum(f * D2Q9_CY.reshape(1,9,1,1), axis = 1, dtype = DTYPE) / rho_s
 
-    rho_mix = xp.clip(xp.sum(rho_s, axis = 0), a_min = 0, a_max= xp.inf)
-    p_mix = xp.clip(xp.sum(rho_s * phi[:, None, None]/3, axis = 0), a_min = 0, a_max = xp.inf)
+    rho_mix = xp.clip(xp.sum(rho_s, axis = 0, dtype = DTYPE), a_min = 0, a_max= xp.inf)
+    p_mix = xp.clip(xp.sum(rho_s * lbm_config.phis[:, None, None]/3, axis = 0, dtype = DTYPE), a_min = 0, a_max = xp.inf)
 
     return rho_s, ux_s, uy_s, rho_mix, p_mix
 
-def calculate_m_mix(rho_s, rho_mix, molecular_weight):
+def calculate_m_mix(rho_s, rho_mix, lbm_config):
 
-    denom = molecular_weight[:, None, None] * rho_mix[None, :, :]
+    denom = lbm_config.molecular_weights[:, None, None] * rho_mix[None, :, :]
     mask = denom > 0
     divider_inv_M = safe_divide(rho_s, denom, mask=mask)
 
@@ -63,52 +63,44 @@ def distribution_semi_implicit(feq_dagger, g_dagger_s, lambda_s):
         (g_dagger_s + theta * lambda_s[:, None, :, :] * feq_dagger)
         / ((1 + theta * lambda_s)[:, None, :, :])
     )
-
+    clipped = 0
     if xp.any(f_new < 0):
-        print("clipped_mix")
-
+        #print("clipped_mix")
+        clipped = 1
     f_new = xp.clip(f_new, a_min = 0, a_max = xp.inf)
 
-    return f_new
+    return f_new, clipped
 
-def bgk_step(f, molecular_weight, phi, multiplier, stream_fn, step, non_absorb_mask, bc_top, bc_bottom, inlet_vx = 0):
+def bgk_step(f, lbm_config, stream_fn):
 
     #################### Before streaming ####################
 
-    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, phi)
-    m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
-    CHI_sc = calculate_CHI(m_mix, molecular_weight, multiplier)
-    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, multiplier)
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(f, lbm_config)
+    m_mix = calculate_m_mix(rho_s, rho_mix, lbm_config)
+    CHI_sc = calculate_CHI(m_mix, lbm_config.molecular_weights, lbm_config.multiplier)
+    lambda_s = calculate_lambda(rho_mix, p_mix, lbm_config.molecular_weights, lbm_config.multiplier)
 
     ux_star_s, uy_star_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_s, uy_s)
-    feq = equilibrium(f, rho_s, phi, ux_star_s, uy_star_s)
+    feq = equilibrium(f, rho_s, lbm_config, ux_star_s, uy_star_s)
 
     g_dagger_s =calculate_g_dagger(f, feq, lambda_s)
 
     #################### After streaming ####################
 
-    g_streamed = stream_fn(g_dagger_s, phi, step,
-                           non_absorb_mask, bc_top, bc_bottom, inlet_vx)
+    g_streamed = stream_fn(g_dagger_s, lbm_config)
 
-    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, phi)
-    m_mix = calculate_m_mix(rho_s, rho_mix, molecular_weight)
+    rho_s, ux_s, uy_s, rho_mix, p_mix = calculate_moment(g_streamed, lbm_config)
+    m_mix = calculate_m_mix(rho_s, rho_mix, lbm_config)
 
-    lambda_s = calculate_lambda(rho_mix, p_mix, molecular_weight, multiplier)
-    CHI_sc = calculate_CHI(m_mix, molecular_weight, multiplier)
+    lambda_s = calculate_lambda(rho_mix, p_mix, lbm_config.molecular_weights, lbm_config.multiplier)
+    CHI_sc = calculate_CHI(m_mix, lbm_config.molecular_weights, lbm_config.multiplier)
 
     Chi_S = post_stream_Chi_S(CHI_sc, rho_s, rho_mix)
     ux_dagger, uy_dagger, jx_s, jy_s = solve_ms_fluxes(lambda_s, Chi_S, CHI_sc, rho_s, rho_mix, ux_s, uy_s, theta=theta)
 
     ux_star_dagger_s, uy_star_dagger_s = calculate_u_star(CHI_sc, rho_s, rho_mix, ux_dagger, uy_dagger)
 
-    feq_dagger = equilibrium(g_streamed, rho_s, phi, ux_star_dagger_s, uy_star_dagger_s)
-    f_new = distribution_semi_implicit(feq_dagger, g_streamed, lambda_s)
+    feq_dagger = equilibrium(g_streamed, rho_s, lbm_config, ux_star_dagger_s, uy_star_dagger_s)
+    f_new, clipped = distribution_semi_implicit(feq_dagger, g_streamed, lambda_s)
 
-    #print(f_new.dtype)
-
-    #print("lambda ", xp.max(lambda_s), xp.min(lambda_s))
-
-    #print("vx ", xp.mean(ux_s, axis = (-2, -1)))
-    #print(xp.mean(uy_s, axis = (-2, -1)))
-
-    return f_new
+    return f_new, clipped

@@ -1,12 +1,11 @@
 from .MS_LBM_functions import *
 
-def save_concentration_frames(f: np.ndarray, phi: np.ndarray, frame_idx: int, molecular_weights) -> None:
-    rho_s, _, _, rho_mix, _ = calculate_moment(f, phi)
+def save_concentration_frames(f: np.ndarray, frame_idx: int, lbm_config) -> None:
+    rho_s, _, _, rho_mix, _ = calculate_moment(f, lbm_config)
     rho_mix_safe = xp.where(rho_mix > 0.0, rho_mix, 1.0)
     conc = rho_s #/ rho_mix_safe[None, :, :]
 
     conc_cpu = to_numpy(conc)
-    mw_cpu = to_numpy(molecular_weights)
     labels = ["Species 1", "Species 2", "Species 3"]
     cmaps = ["Blues", "Greens", "Reds"]
 

@@ -1,30 +1,31 @@
 from .common import *
 
-def equilibrium(f, rho_s, phi, ux_star_s, uy_star_s):
+def equilibrium(f, rho_s, lbm_config, ux_star_s, uy_star_s):
 
     #N_species = len(phi)
-    feq = xp.zeros_like(f)
+    feq = xp.zeros_like(f, dtype = DTYPE)
+
 
     u_sq = ux_star_s ** 2 + uy_star_s ** 2 # (N_species, nx, ny)
     cu = D2Q9_CX[None, :, None, None] * ux_star_s[:, None, :, :] + D2Q9_CY[None, :, None, None] * uy_star_s[:, None, :, :]
 
-    feq = w[None, :, None, None] * rho_s[:, None, :, :] * (
-        phi[:, None, None, None]
+    feq[:,:,:,:] = w[None, :, None, None] * rho_s[:, None, :, :] * (
+        lbm_config.phis[:, None, None, None]
         + 3 * cu
         + 4.5 * cu**2
         -1.5 * u_sq[:, None, :, :]
     )
 
-    feq[:, 0, :, :] = w[0] * rho_s * ((9 - 5 * phi[:, None, None]) / 4 - 1.5 * u_sq)
+    feq[:, 0, :, :] = w[0] * rho_s * ((9 - 5 * lbm_config.phis[:, None, None]) / 4 - 1.5 * u_sq)
 
-    if xp.any(feq < 0):
-        print("clipped_eq")
+    #if xp.any(feq < 0):
+        #print("clipped_eq")
     feq = xp.clip(feq, a_min=0, a_max=xp.inf)
 
     return feq
 
 def post_stream_Chi_S(CHI_sc, rho_s, rho_mix):
-    Chi_S = xp.zeros_like(rho_s)
+    Chi_S = xp.zeros_like(rho_s, dtype = DTYPE)
 
     for s in range(rho_s.shape[0]):
         Chi_S[s] = xp.sum(CHI_sc[s, :, :, :] * rho_s / rho_mix[None, :, :], axis=0)
