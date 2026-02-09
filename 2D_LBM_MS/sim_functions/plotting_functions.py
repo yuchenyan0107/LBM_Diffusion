@@ -6,10 +6,10 @@ def save_concentration_frames(f: np.ndarray, frame_idx: int, lbm_config) -> None
     conc = rho_s #/ rho_mix_safe[None, :, :]
 
     conc_cpu = to_numpy(conc)
-    labels = ["Species 1", "Species 2", "Species 3"]
-    cmaps = ["Blues", "Greens", "Reds"]
+    labels = ["H2", "TMIn", "PH3", "CH4"]
+    cmaps = ["Blues", "Greens", "Reds", "Greys"]
 
-    fig, axes = plt.subplots(3, 1, figsize=(6, 9), sharex=True, sharey=True)
+    fig, axes = plt.subplots(4, 1, figsize=(6, 9), sharex=True, sharey=True)
     for s in range(f.shape[0]):
         #im = axes[s].imshow((conc_cpu[s].T)/mw_cpu[s], origin="lower", cmap=cmaps[s], aspect="auto")
         im = axes[s].imshow((conc_cpu[s].T), origin="lower", cmap=cmaps[s], aspect="auto")

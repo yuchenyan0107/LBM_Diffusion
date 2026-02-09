@@ -11,9 +11,11 @@ if use_cupy:
     except ImportError:
         cp = None
         xp = np
+        print("Using numpy")
 else:
     cp = None
     xp = np
+    print("Using numpy")
 
 def to_numpy(arr):
     if cp is not None and hasattr(cp, "asnumpy") and isinstance(arr, cp.ndarray):
