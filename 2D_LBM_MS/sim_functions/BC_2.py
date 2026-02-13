@@ -10,7 +10,7 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
 
     # Right outlet
     for i in (6, 7, 8):
-        g_streamed[:, i, -1, 1:-1] = g_streamed[:, i, -2, 1:-1]
+        g_streamed[:, i, -1, :] = g_streamed[:, i, -2, :]
 
     # Left inlet
     rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]  # (ns,ny)
@@ -22,7 +22,7 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
 
     for s in range(lbm_config.c_top.shape[0]):
         feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)  # (ns,9,ny)
-        g_streamed[s, :, 0, 1:-1] = feq_in[:, 1:-1]
+        g_streamed[s, :, 0, :] = feq_in[:, :]
 
     # Top wall moving
     rho_top_wall = 3* lbm_config.c_top[:, None] * xp.ones(lbm_config.nx)[None, :]
@@ -61,7 +61,7 @@ def bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config):
     g_streamed[s, boundary_indexes, :, row_index] = -g_dagger_s[s, opposite_indexes, :, row_index] + 2 * f_w_bottom[boundary_indexes, :]
     g_streamed[s, boundary_indexes[:, None], mask_idx[None, :], row_index] = g_dagger_s[s, opposite_indexes[:, None], mask_idx[None, :], row_index]
 
-    #grad2 = xp.sum(g_dagger_s[s, :, :, row_index+1], axis=0)-xp.sum(g_dagger_s[s, :, :, row_index], axis=0)
+    #grad2 = -(xp.sum(g_dagger_s[s, :, :, row_index+2], axis=0)-xp.sum(g_dagger_s[s, :, :, row_index], axis=0))/2
     #J2 = -lbm_config.D_s[s] * grad2
 
     J2 = -lbm_config.D_s[s] * (C_w - C_f2) / (ne_dx/2)
@@ -69,7 +69,6 @@ def bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config):
     # component 3 PH3: same absorption flux as component 2
     s = 2
     J3 = J2 * lbm_config.absorption_ratio[s]
-    #grad3 = - J3/lbm_config.D_s[s]
     C_f3 = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)
     C_w3 = C_f3 - (ne_dx/2) * (J3 / lbm_config.D_s[s])
     feq_w3 = eq_single_boundary(C_w3, lbm_config.phis[s], xp.zeros(g_dagger_s.shape[2]),xp.zeros(g_dagger_s.shape[2]))
@@ -79,12 +78,52 @@ def bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config):
     # component 4, CH4: positive & three times slope of PH3 consumption
     s = 3
     J4 = J2 * lbm_config.absorption_ratio[s]
-    #grad4 = - J4 / lbm_config.D_s[s]
     C_f4 = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)
-    #C_w4 = C_f4 + grad4 * ne_dx
     C_w4 = C_f4 - (ne_dx / 2) * (J4 / lbm_config.D_s[s])
     feq_w4 = eq_single_boundary(C_w4, lbm_config.phis[s], xp.zeros(g_dagger_s.shape[2]), xp.zeros(g_dagger_s.shape[2]))
     g_streamed[s, boundary_indexes, :, row_index] = -g_dagger_s[s, opposite_indexes, :, row_index] + 2 * feq_w4[boundary_indexes,:]
     g_streamed[s, boundary_indexes[:, None], mask_idx[None, :], row_index] = g_dagger_s[s, opposite_indexes[:, None], mask_idx[None, :], row_index]
     return g_streamed
 
+def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
+
+    g_streamed = xp.zeros_like(g_dagger_s)
+    for i in range(w.shape[0]): # for each direction
+        g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
+
+    # Right outlet
+    for i in (6, 7, 8):
+        g_streamed[:, i, -1, :] = g_streamed[:, i, -2, :]
+
+    # Left inlet (Poiseuille / quadratic profile between no-slip walls)
+    rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(
+        lbm_config.ny, dtype=g_dagger_s.dtype
+    )[None, :]  # (ns, ny)
+
+    y = xp.arange(lbm_config.ny, dtype=DTYPE)
+    H = DTYPE(lbm_config.ny - 1.0)
+    eta = y / H  # 0..1
+
+    u_max = xp.array(lbm_config.v_top, dtype=DTYPE)[0]
+    ux_in = 4.0 * u_max * eta * (1.0 - eta)
+
+    uy_in = xp.zeros_like(ux_in)
+
+    for s in range(lbm_config.c_top.shape[0]):
+        feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)
+        g_streamed[s, :, 0, :] = feq_in[:, :]
+
+    # Top wall stationary
+    rho_top_wall = 3* lbm_config.c_top[:, None] * xp.ones(lbm_config.nx)[None, :]
+    ux, uy = 0 ,0
+    for i in (5, 4, 6):  # CY=-1 directions (incoming from above)
+        c_dot_u = D2Q9_CX[i] * ux + D2Q9_CY[i] * uy  # scalar
+        g_streamed[:, i, :, -1] = (
+                g_dagger_s[:, OPPOSITE[i], :, -1]
+                + 6.0 * w[i] * rho_top_wall * c_dot_u  # since cs^2 = 1/3
+        )
+
+    # Bottom wall absorption
+    g_streamed = bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config)
+
+    return g_streamed
