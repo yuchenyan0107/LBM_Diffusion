@@ -9,6 +9,43 @@ Zudrop, J., Masilamani, K., Roller, S., & Asinari, P. (2017). A robust lattice B
 The implementation of the Dirichlet and Robin boundary conditions are based on:
 Zhang, T., Shi, B., Guo, Z., Chai, Z., & Lu, J. (2012). General bounce-back scheme for concentration boundary condition in the lattice-Boltzmann method. Physical Review E, 85(1), 016701. https://doi.org/10.1103/physreve.85.016701
 
+## 2D_LBM_MS file structure
+
+The `2D_LBM_MS` folder contains the 2D Maxwell-Stefan LBM implementation, example notebooks, and sample outputs/results:
+
+```text
+2D_LBM_MS/
+  sim_functions/               # Core simulation package
+    MS_LBM_functions.py        # Main simulation loop and workflow functions
+    eq_and_ms.py               # Equilibrium distribution and Maxwell-Stefan terms
+    boundary_conditions.py     # Boundary-condition handlers
+    BC_2.py                    # Additional/alternative BC implementations
+    parameters.py              # Parameter definitions and setup helpers
+    plotting_functions.py      # Plotting and visualization utilities
+    common.py                  # Shared utility functions
+    __init__.py                # Package entry
+
+  frame_output/                # Generated frame images from simulations
+
+  *.ipynb                      # Case-study and demo notebooks
+                               # (e.g., shear decay, stripe diffusion, thick absorption)
+  *.npy                        # Saved simulation states/results for reuse and analysis
+  MS_LBM_Algorithm_Notes.md    # Notes on model/algorithm details
+```
+
+### Notebook quick guide (`2D_LBM_MS`)
+
+- `parameters.ipynb`: Converts physical inputs to LBM-scale parameters and reports key dimensionless numbers (e.g., `Re`, `Pe`).
+- `shear_decay.ipynb`: Runs a laminar shear-wave decay test and fits decay to verify effective viscosity.
+- `stripe_diffusion.ipynb`: Simulates diffusion of a narrow/Gaussian stripe and checks diffusion scaling over time.
+- `thick_absorption_demo.ipynb`: Small 2-species demo of flow + bottom absorption boundary behavior.
+- `thick_absorption_4_species.ipynb`: Main 4-species thick-absorption case with flow, concentration frames, and saved end state.
+- `PS_thick_4_species.ipynb`: Parameter-sweep version of reaction chamber scale flow
+- `thick_concentration_analysis.ipynb`: Post-processes saved simulation arrays (e.g., `f_simulation.npy`) to analyze concentration profiles.
+- `sample_mask1.ipynb`: 4-species masked-geometry simulation example and result export (`f_sample_simulation.npy`).
+- `PS_mask.ipynb`: Parameter-sweep version of the masked 4-species case (sweeps absorption coefficient and saves result lists).
+
+
 Here we give some examples in jupyter notebooks to demonstrate the current implementation:
 
 1. (Almost) pure diffusion in LBM: 
