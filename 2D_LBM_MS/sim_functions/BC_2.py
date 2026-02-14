@@ -7,22 +7,11 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
     g_streamed = xp.zeros_like(g_dagger_s)
     for i in range(w.shape[0]): # for each direction
         g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
-
+    '''
     # Right outlet
     for i in (6, 7, 8):
-        g_streamed[:, i, -1, :] = g_streamed[:, i, -2, :]
-
-    # Left inlet
-    rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]  # (ns,ny)
-
-    y = xp.arange(lbm_config.ny, dtype=DTYPE)
-    u_wall = xp.array(lbm_config.v_top, dtype=DTYPE)[0]
-    ux_in = u_wall * (y / (lbm_config.ny - 1.0))
-    uy_in = xp.zeros_like(ux_in)
-
-    for s in range(lbm_config.c_top.shape[0]):
-        feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)  # (ns,9,ny)
-        g_streamed[s, :, 0, :] = feq_in[:, :]
+        g_streamed[:, i, -1, :] = g_dagger_s[:, i, -2, :]
+    '''
 
     # Top wall moving
     rho_top_wall = 3* lbm_config.c_top[:, None] * xp.ones(lbm_config.nx)[None, :]
@@ -36,6 +25,25 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
 
     # Bottom wall absorption
     g_streamed = bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config)
+
+    # Left inlet
+    rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]  # (ns,ny)
+
+    y = xp.arange(lbm_config.ny, dtype=DTYPE)
+    u_wall = xp.array(lbm_config.v_top, dtype=DTYPE)[0]
+    ux_in = u_wall * (y / (lbm_config.ny - 1.0))
+    uy_in = xp.zeros_like(ux_in)
+
+    g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in, y_slice=slice(1, -1))
+
+    '''
+    for s in range(lbm_config.c_top.shape[0]):
+        feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)  # (ns,9,ny)
+        g_streamed[s, :, 0, :] = feq_in[:, :]
+    '''
+    # right outlet:
+    g_streamed = outlet_nee_right(g_streamed, g_dagger_s, lbm_config)
+
 
     return g_streamed
 
@@ -90,10 +98,23 @@ def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
     g_streamed = xp.zeros_like(g_dagger_s)
     for i in range(w.shape[0]): # for each direction
         g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
-
+    '''
     # Right outlet
     for i in (6, 7, 8):
         g_streamed[:, i, -1, :] = g_streamed[:, i, -2, :]
+    '''
+    # Top wall stationary
+    rho_top_wall = 3* lbm_config.c_top[:, None] * xp.ones(lbm_config.nx)[None, :]
+    ux, uy = 0 ,0
+    for i in (5, 4, 6):  # CY=-1 directions (incoming from above)
+        c_dot_u = D2Q9_CX[i] * ux + D2Q9_CY[i] * uy  # scalar
+        g_streamed[:, i, :, -1] = (
+                g_dagger_s[:, OPPOSITE[i], :, -1]
+                + 6.0 * w[i] * rho_top_wall * c_dot_u  # since cs^2 = 1/3
+        )
+
+    # Bottom wall absorption
+    g_streamed = bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config)
 
     # Left inlet (Poiseuille / quadratic profile between no-slip walls)
     rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(
@@ -109,21 +130,71 @@ def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
 
     uy_in = xp.zeros_like(ux_in)
 
+    #C_in_s = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]
+
+    g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in, y_slice=slice(1, -1))
+    '''
     for s in range(lbm_config.c_top.shape[0]):
         feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)
         g_streamed[s, :, 0, :] = feq_in[:, :]
-
-    # Top wall stationary
-    rho_top_wall = 3* lbm_config.c_top[:, None] * xp.ones(lbm_config.nx)[None, :]
-    ux, uy = 0 ,0
-    for i in (5, 4, 6):  # CY=-1 directions (incoming from above)
-        c_dot_u = D2Q9_CX[i] * ux + D2Q9_CY[i] * uy  # scalar
-        g_streamed[:, i, :, -1] = (
-                g_dagger_s[:, OPPOSITE[i], :, -1]
-                + 6.0 * w[i] * rho_top_wall * c_dot_u  # since cs^2 = 1/3
-        )
-
-    # Bottom wall absorption
-    g_streamed = bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config)
+    '''
+    # right outlet:
+    g_streamed = outlet_nee_right(g_streamed, g_dagger_s, lbm_config)
 
     return g_streamed
+
+def inlet_nee_left(g_streamed, g_dagger_s, lbm_config, C_in_s, ux_in, uy_in, y_slice=slice(1, -1)):
+    """
+    NEE inlet at x=0.
+    - Only sets incoming directions (cx>0) to avoid overwriting outgoing ones.
+    - Uses non-equilibrium from interior plane x=1.
+    Shapes:
+      g_* : (ns, 9, nx, ny)
+      C_in_s : (ns, ny)   (species concentration/density at inlet)
+      ux_in, uy_in : (ny,)
+    """
+    x0, x1 = 0, 1
+    incoming_left = xp.where(D2Q9_CX > 0)[0]  # directions entering domain from left boundary
+
+    # interior macro (per species) at x=1
+    C_1_s = xp.sum(g_dagger_s[:, :, x1, :], axis=1)  # (ns, ny)
+
+    for s in range(g_dagger_s.shape[0]):
+        feq_in = eq_single_boundary(C_in_s[s], lbm_config.phis[s], ux_in, uy_in)  # (9, ny)
+        feq_1  = eq_single_boundary(C_1_s[s],  lbm_config.phis[s], ux_in, uy_in)  # (9, ny)
+
+        f_1 = g_dagger_s[s, :, x1, :]  # (9, ny)
+
+        g_streamed[s, incoming_left, x0, y_slice] = (
+            feq_in[incoming_left, y_slice] + (f_1[incoming_left, y_slice] - feq_1[incoming_left, y_slice])
+        )
+
+    return g_streamed
+
+
+def outlet_nee_right(g_streamed, g_dagger_s, lbm_config):
+    x_out = lbm_config.nx - 1
+    x_in  = lbm_config.nx - 2
+    incoming = xp.where(D2Q9_CX < 0)[0]
+
+    # macros at interior plane
+    C_in = xp.sum(g_dagger_s[:, :, x_in, :], axis=1)   # (ns, ny)
+    # choose outlet macros (simple extrapolation)
+    C_out = C_in.copy()
+
+    # if you have mixture velocity field available, use it here
+    # otherwise for species-only advection you may use a prescribed u_out or extrapolate from interior
+    ux_out = xp.zeros(lbm_config.ny, dtype=g_dagger_s.dtype)
+    uy_out = xp.zeros_like(ux_out)
+
+    for s in range(g_dagger_s.shape[0]):
+        feq_in  = eq_single_boundary(C_in[s],  lbm_config.phis[s], ux_out, uy_out)   # (9, ny)
+        feq_out = eq_single_boundary(C_out[s], lbm_config.phis[s], ux_out, uy_out)
+
+        f_in  = g_dagger_s[s, :, x_in, :]   # (9, ny)
+        f_out = feq_out + (f_in - feq_in)
+
+        g_streamed[s, incoming, x_out, 1:-1] = f_out[incoming, 1:-1]
+
+    return g_streamed
+
