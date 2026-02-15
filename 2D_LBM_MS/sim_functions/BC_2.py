@@ -34,7 +34,8 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
     ux_in = u_wall * (y / (lbm_config.ny - 1.0))
     uy_in = xp.zeros_like(ux_in)
 
-    g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in, y_slice=slice(1, -1))
+    g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in,
+                                y_slice=slice(None))
 
     '''
     for s in range(lbm_config.c_top.shape[0]):
@@ -93,6 +94,16 @@ def bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config):
     g_streamed[s, boundary_indexes[:, None], mask_idx[None, :], row_index] = g_dagger_s[s, opposite_indexes[:, None], mask_idx[None, :], row_index]
     return g_streamed
 
+def top_wall_noslip(g_streamed, g_dagger_s, lbm_config):
+    boundary_indexes = xp.array([4,5,6])
+    opposite_indexes = OPPOSITE[boundary_indexes]
+    row_index = -1
+    # component 1, H2: reflecting boundary: no-slip wall
+    for s in range(4):
+        g_streamed[s, boundary_indexes, :, row_index] = g_dagger_s[s, opposite_indexes, :, row_index]
+
+    return g_streamed
+
 def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
 
     g_streamed = xp.zeros_like(g_dagger_s)
@@ -132,18 +143,19 @@ def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
 
     #C_in_s = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]
 
-    g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in, y_slice=slice(1, -1))
-    '''
+    #g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in, y_slice=slice(None))
+
     for s in range(lbm_config.c_top.shape[0]):
         feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)
         g_streamed[s, :, 0, :] = feq_in[:, :]
-    '''
+
     # right outlet:
-    g_streamed = outlet_nee_right(g_streamed, g_dagger_s, lbm_config)
+    #g_streamed = outlet_nee_right(g_streamed, g_dagger_s, lbm_config)
+    g_streamed = outlet_zero_gradient_right(g_streamed, lbm_config)
 
     return g_streamed
 
-def inlet_nee_left(g_streamed, g_dagger_s, lbm_config, C_in_s, ux_in, uy_in, y_slice=slice(1, -1)):
+def inlet_nee_left(g_streamed, g_dagger_s, lbm_config, C_in_s, ux_in, uy_in, y_slice=slice(None)):
     """
     NEE inlet at x=0.
     - Only sets incoming directions (cx>0) to avoid overwriting outgoing ones.
@@ -194,7 +206,25 @@ def outlet_nee_right(g_streamed, g_dagger_s, lbm_config):
         f_in  = g_dagger_s[s, :, x_in, :]   # (9, ny)
         f_out = feq_out + (f_in - feq_in)
 
-        g_streamed[s, incoming, x_out, 1:-1] = f_out[incoming, 1:-1]
+        g_streamed[s, incoming, x_out, :] = f_out[incoming, :]
 
     return g_streamed
 
+
+def outlet_zero_gradient_right(g_streamed, lbm_config):
+    """
+    Simple Zero-Gradient (Open) Outlet at x=nx-1.
+    Copies populations from x=nx-2 to x=nx-1 for incoming directions.
+    """
+    x_out = lbm_config.nx - 1
+    x_in = lbm_config.nx - 2
+
+    # Directions entering the domain from the right boundary (moving Left)
+    incoming_from_right = xp.where(D2Q9_CX < 0)[0]
+
+    # Simply copy the distribution from the neighbor node
+    # This acts as a "conveyor belt" letting structures exit smoothly.
+    for s in range(g_streamed.shape[0]):
+        g_streamed[s, incoming_from_right, x_out, :] = g_streamed[s, incoming_from_right, x_in, :]
+
+    return g_streamed
