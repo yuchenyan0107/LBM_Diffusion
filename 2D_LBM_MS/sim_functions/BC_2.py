@@ -144,16 +144,93 @@ def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
     #C_in_s = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]
 
     #g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in, y_slice=slice(None))
-
+    '''
     for s in range(lbm_config.c_top.shape[0]):
         feq_in = eq_single_boundary(rho_in[s], lbm_config.phis[s], ux_in, uy_in)
         g_streamed[s, :, 0, :] = feq_in[:, :]
+    '''
+    g_streamed = zou_he_mixture_velocity_inlet_left(g_streamed, lbm_config, ux_in, uy_in, x0=0, y_slice=slice(None))
 
     # right outlet:
     #g_streamed = outlet_nee_right(g_streamed, g_dagger_s, lbm_config)
     g_streamed = outlet_zero_gradient_right(g_streamed, lbm_config)
 
     return g_streamed
+
+def zou_he_mixture_velocity_inlet_left(
+    g_streamed,         # (ns, 9, nx, ny) after streaming, will be modified in-place
+    lbm_config,
+    ux_in, uy_in,       # (ny,) desired inlet velocity profile
+    x0=0,
+    y_slice=slice(1, -1),
+    phi_total=1.0,      # use 1.0 -> standard fluid equilibrium
+):
+    """
+    Mixture-level Zou/He velocity inlet at left boundary x=x0.
+
+    Steps:
+      1) form total populations f_tot = sum_s g_s at the inlet plane
+      2) compute rho_tot(y) via Zou/He using f_tot and prescribed u(y)
+      3) split rho_tot into rho_s = x_s * rho_tot using composition fractions from lbm_config.c_top
+      4) reconstruct each species' unknown incoming populations:
+           g_s[i] = g_s[opp(i)] + feq_s[i](rho_s,u) - feq_s[opp(i)](rho_s,u)
+         for directions with CX>0 at the left boundary.
+    """
+
+    ns, q, nx, ny = g_streamed.shape
+    assert q == 9, "This inlet assumes D2Q9."
+
+    # --- direction sets (sign-based, indexing-agnostic)
+    incoming = xp.where(D2Q9_CX > 0)[0]      # unknown at x=0 (coming into domain)
+    known    = xp.where(D2Q9_CX <= 0)[0]     # known at x=0 after streaming
+    opp      = OPPOSITE[incoming]
+
+    # --- freeze boundary values before we overwrite anything
+    # shape: (ns, 9, ny)
+    g0_pre = g_streamed[:, :, x0, :].copy()
+
+    # --- mixture total populations at x=0
+    # shape: (9, ny)
+    f_tot = xp.sum(g0_pre, axis=0)
+
+    # --- build equilibrium "coefficients" B_i(u) s.t. feq_i = rho * B_i
+    ones = xp.ones(ny, dtype=g_streamed.dtype)
+    B_tot = eq_single_boundary(ones, phi_total, ux_in, uy_in)  # (9, ny)
+
+    # --- Zou/He solve for rho_tot(y)
+    # rho = sum_known f + sum_incoming( f_opp + rho*(B_i - B_opp) )
+    # => rho*(1 - sum_incoming(B_i - B_opp)) = sum_known f + sum_incoming f_opp
+    K = xp.sum(B_tot[incoming, :] - B_tot[opp, :], axis=0)     # (ny,)
+    S_known = xp.sum(f_tot[known, :], axis=0)                  # (ny,)
+    S_opp   = xp.sum(f_tot[opp,  :], axis=0)                   # (ny,)
+
+    denom = (1.0 - K)
+    denom = xp.where(xp.abs(denom) < 1e-12, 1e-12, denom)
+    rho_tot = (S_known + S_opp) / denom                        # (ny,)
+
+    # --- split mixture density into species partial densities using c_top fractions
+    frac = xp.array(lbm_config.c_top, dtype=g_streamed.dtype)  # (ns,)
+    frac_sum = xp.sum(frac)
+    frac = frac / (frac_sum if frac_sum != 0 else 1.0)
+
+    # rho_s: (ns, ny)
+    rho_s = frac[:, None] * rho_tot[None, :]
+
+    # --- species-wise Zou/He reconstruction for unknown incoming directions
+    # Only touch y_slice to avoid fighting top/bottom BCs at corners.
+    for s in range(ns):
+        feq_s = eq_single_boundary(rho_s[s], lbm_config.phis[s], ux_in, uy_in)  # (9, ny)
+
+        # known opposite populations come from pre-BC boundary values
+        g_opp = g0_pre[s, opp, :]  # (n_in, ny)
+
+        # Zou/He reconstruction (non-equilibrium bounce-back form)
+        g_in = g_opp + (feq_s[incoming, :] - feq_s[opp, :])  # (n_in, ny)
+
+        g_streamed[s, incoming, x0, y_slice] = g_in[:, y_slice]
+
+    return g_streamed#, rho_tot
+
 
 def inlet_nee_left(g_streamed, g_dagger_s, lbm_config, C_in_s, ux_in, uy_in, y_slice=slice(None)):
     """
