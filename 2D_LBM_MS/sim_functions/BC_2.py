@@ -14,28 +14,35 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
     '''
 
     # Top wall moving
+    '''
     rho_top_wall = 3* lbm_config.c_top[:, None] * xp.ones(lbm_config.nx)[None, :]
     ux, uy = lbm_config.v_top  # wall velocity
+
+    u_lid = xp.array(lbm_config.v_top, dtype=DTYPE)[0]  # 0-D CuPy scalar is OK now
+    rho_top_s = 3.0 * lbm_config.c_top[:, None] * xp.ones((1, lbm_config.nx), dtype=DTYPE)
+
     for i in (5, 4, 6):  # CY=-1 directions (incoming from above)
         c_dot_u = D2Q9_CX[i] * ux + D2Q9_CY[i] * uy  # scalar
         g_streamed[:, i, :, -1] = (
                 g_dagger_s[:, OPPOSITE[i], :, -1]
                 + 6.0 * w[i] * rho_top_wall * c_dot_u  # since cs^2 = 1/3
         )
+    '''
+    #g_streamed = top_wall_dirichlet(g_streamed, g_dagger_s, lbm_config)
+    g_streamed = top_wall_velocity_dirichlet(g_streamed, lbm_config, x_slice=slice(None))
 
     # Bottom wall absorption
     g_streamed = bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config)
 
     # Left inlet
-    rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]  # (ns,ny)
+    #rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]  # (ns,ny)
 
     y = xp.arange(lbm_config.ny, dtype=DTYPE)
     u_wall = xp.array(lbm_config.v_top, dtype=DTYPE)[0]
     ux_in = u_wall * (y / (lbm_config.ny - 1.0))
     uy_in = xp.zeros_like(ux_in)
 
-    g_streamed = inlet_nee_left(g_streamed, g_dagger_s, lbm_config, rho_in, ux_in, uy_in,
-                                y_slice=slice(None))
+    g_streamed = zou_he_mixture_velocity_inlet_left(g_streamed, lbm_config, ux_in, uy_in, x0=0, y_slice=slice(None))
 
     '''
     for s in range(lbm_config.c_top.shape[0]):
@@ -43,8 +50,53 @@ def top_moving_left_intake_bottom_absorb_4_species(g_dagger_s, lbm_config):
         g_streamed[s, :, 0, :] = feq_in[:, :]
     '''
     # right outlet:
-    g_streamed = outlet_nee_right(g_streamed, g_dagger_s, lbm_config)
+    g_streamed = outlet_zero_gradient_right(g_streamed, lbm_config)
 
+
+    return g_streamed
+
+def top_wall_dirichlet(g_streamed, g_dagger_s, lbm_config):
+    boundary_indexes = xp.array([4,5,6])
+    opposite_indexes = OPPOSITE[boundary_indexes]
+    row_index = -1
+
+    for s in range(len(lbm_config.c_top)):
+        C_w = xp.ones(lbm_config.nx, dtype=DTYPE) * lbm_config.c_top[s] * 3
+        # velocity for f_eq here must be 0 for this boundary condition
+        #ux_array = lbm_config.v_top[0] * xp.ones(lbm_config.nx, dtype=DTYPE) # doesn't work at all
+        ux_array = xp.zeros(g_dagger_s.shape[2])
+        f_w_bottom = eq_single_boundary(C_w, lbm_config.phis[s], ux_array,
+                                        xp.zeros(g_dagger_s.shape[2]))
+        # apply boundary concentration C_w to g_streamed
+        g_streamed[s, boundary_indexes, :, row_index] = -g_streamed[s, opposite_indexes, :, row_index] + 2 * f_w_bottom[boundary_indexes,:]
+
+    return g_streamed
+
+def top_wall_velocity_dirichlet(g_streamed, lbm_config, x_slice=slice(None)):
+    incoming = xp.array([4, 5, 6])              # your CY=-1 set
+    opp = OPPOSITE[incoming]
+    row_index = -1
+    nx = lbm_config.nx
+
+    ux = xp.full(nx, lbm_config.v_top[0], dtype=g_streamed.dtype)
+    uy = xp.full(nx, lbm_config.v_top[1], dtype=g_streamed.dtype)
+
+    # freeze boundary plane before overwriting
+    g_pre = g_streamed[:, :, :, row_index].copy()      # (ns, 9, nx)
+
+    for s in range(len(lbm_config.c_top)):
+        Cw = xp.full(nx, 3.0 * lbm_config.c_top[s], dtype=g_streamed.dtype)
+
+        feq = eq_single_boundary(Cw, lbm_config.phis[s], ux, uy)  # (9, nx)
+
+        # NEE (bounce-back of non-equilibrium)
+        g_streamed[s, incoming, x_slice, row_index] = (
+             + feq[incoming, x_slice] + g_streamed[s, opp, :, row_index] - feq[opp, x_slice]
+        )
+
+        # enforce exact Dirichlet density by adjusting rest population
+        C_now = xp.sum(g_streamed[s, :, :, row_index], axis=0)           # (nx,)
+        g_streamed[s, 0, x_slice, row_index] += (Cw[x_slice] - C_now[x_slice])
 
     return g_streamed
 
@@ -65,6 +117,7 @@ def bottom_absorption_four_components(g_streamed, g_dagger_s, lbm_config):
     ne_dx = 1
     C_f2 = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)  # last component, bottom row
     C_w = (C_f2 + ne_dx * b3_rho / b1 / 2) / (1 + ne_dx * b2 / b1 / 2)
+    # velocity for f_eq here must be 0 for this boundary condition
     f_w_bottom = eq_single_boundary(C_w, lbm_config.phis[1], xp.zeros(g_dagger_s.shape[2]),xp.zeros(g_dagger_s.shape[2]))
     # apply boundary concentration C_w to g_streamed
     g_streamed[s, boundary_indexes, :, row_index] = -g_dagger_s[s, opposite_indexes, :, row_index] + 2 * f_w_bottom[boundary_indexes, :]
@@ -103,6 +156,7 @@ def top_wall_noslip(g_streamed, g_dagger_s, lbm_config):
         g_streamed[s, boundary_indexes, :, row_index] = g_dagger_s[s, opposite_indexes, :, row_index]
 
     return g_streamed
+
 
 def tube_flow_bottom_absorb(g_dagger_s, lbm_config):
 
@@ -260,34 +314,6 @@ def inlet_nee_left(g_streamed, g_dagger_s, lbm_config, C_in_s, ux_in, uy_in, y_s
 
     return g_streamed
 
-
-def outlet_nee_right(g_streamed, g_dagger_s, lbm_config):
-    x_out = lbm_config.nx - 1
-    x_in  = lbm_config.nx - 2
-    incoming = xp.where(D2Q9_CX < 0)[0]
-
-    # macros at interior plane
-    C_in = xp.sum(g_dagger_s[:, :, x_in, :], axis=1)   # (ns, ny)
-    # choose outlet macros (simple extrapolation)
-    C_out = C_in.copy()
-
-    # if you have mixture velocity field available, use it here
-    # otherwise for species-only advection you may use a prescribed u_out or extrapolate from interior
-    ux_out = xp.zeros(lbm_config.ny, dtype=g_dagger_s.dtype)
-    uy_out = xp.zeros_like(ux_out)
-
-    for s in range(g_dagger_s.shape[0]):
-        feq_in  = eq_single_boundary(C_in[s],  lbm_config.phis[s], ux_out, uy_out)   # (9, ny)
-        feq_out = eq_single_boundary(C_out[s], lbm_config.phis[s], ux_out, uy_out)
-
-        f_in  = g_dagger_s[s, :, x_in, :]   # (9, ny)
-        f_out = feq_out + (f_in - feq_in)
-
-        g_streamed[s, incoming, x_out, :] = f_out[incoming, :]
-
-    return g_streamed
-
-
 def outlet_zero_gradient_right(g_streamed, lbm_config):
     """
     Simple Zero-Gradient (Open) Outlet at x=nx-1.
@@ -303,5 +329,59 @@ def outlet_zero_gradient_right(g_streamed, lbm_config):
     # This acts as a "conveyor belt" letting structures exit smoothly.
     for s in range(g_streamed.shape[0]):
         g_streamed[s, incoming_from_right, x_out, :] = g_streamed[s, incoming_from_right, x_in, :]
+
+    return g_streamed
+
+
+def demo2(g_dagger_s, lbm_config):
+
+    g_streamed = xp.zeros_like(g_dagger_s)
+    for i in range(w.shape[0]): # for each direction
+        g_streamed[:, i, :, :] = xp.roll(g_dagger_s[:, i, :, :], (int(D2Q9_CX[i]), int(D2Q9_CY[i])), axis=(1, 2))
+
+    g_streamed = top_wall_velocity_dirichlet(g_streamed, lbm_config, x_slice=slice(None))
+
+    # Bottom wall absorption
+    g_streamed = demo2_bottom(g_streamed, g_dagger_s, lbm_config)
+
+    # Left inlet
+    #rho_in = 3.0 * lbm_config.c_top[:, None] * xp.ones(lbm_config.ny, dtype=g_dagger_s.dtype)[None, :]  # (ns,ny)
+
+    y = xp.arange(lbm_config.ny, dtype=DTYPE)
+    u_wall = xp.array(lbm_config.v_top, dtype=DTYPE)[0]
+    ux_in = u_wall * (y / (lbm_config.ny - 1.0))
+    uy_in = xp.zeros_like(ux_in)
+
+    g_streamed = zou_he_mixture_velocity_inlet_left(g_streamed, lbm_config, ux_in, uy_in, x0=0, y_slice=slice(None))
+
+
+    # right outlet:
+    g_streamed = outlet_zero_gradient_right(g_streamed, lbm_config)
+
+
+    return g_streamed
+
+def demo2_bottom(g_streamed, g_dagger_s, lbm_config):
+    boundary_indexes = xp.array([1, 2, 8])
+    opposite_indexes = OPPOSITE[boundary_indexes]
+    mask_x = (lbm_config.non_absorb_mask == 1)
+    mask_idx = xp.nonzero(mask_x)[0]
+    row_index = 0
+    # component 1, H2: reflecting boundary: no-slip wall
+    s=0
+    g_streamed[s, boundary_indexes, :, row_index] = g_dagger_s[s, opposite_indexes, :, row_index]
+
+    # component 2 TMIn: Robin condition: dC/dx = k C
+    s=1
+    b1, b2, b3 = lbm_config.comp2_bc
+    b3_rho = b3 * 3
+    ne_dx = 1
+    C_f2 = xp.sum(g_dagger_s[s, :, :, row_index], axis=0)  # last component, bottom row
+    C_w = (C_f2 + ne_dx * b3_rho / b1 / 2) / (1 + ne_dx * b2 / b1 / 2)
+    # velocity for f_eq here must be 0 for this boundary condition
+    f_w_bottom = eq_single_boundary(C_w, lbm_config.phis[1], xp.zeros(g_dagger_s.shape[2]),xp.zeros(g_dagger_s.shape[2]))
+    # apply boundary concentration C_w to g_streamed
+    g_streamed[s, boundary_indexes, :, row_index] = -g_dagger_s[s, opposite_indexes, :, row_index] + 2 * f_w_bottom[boundary_indexes, :]
+    g_streamed[s, boundary_indexes[:, None], mask_idx[None, :], row_index] = g_dagger_s[s, opposite_indexes[:, None], mask_idx[None, :], row_index]
 
     return g_streamed
